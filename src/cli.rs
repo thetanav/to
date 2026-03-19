@@ -27,6 +27,9 @@ Usage:
   to done <number>
       Mark a task completed
 
+  to do <number>
+      Launch `opencode` for a task using the built-in agent prompt
+
   to uncheck <number>
       Mark a task as not completed
 
@@ -47,6 +50,7 @@ pub enum Command {
     List,
     Add(String),
     Done(usize),
+    Do(usize),
     Uncheck(usize),
     Scan,
     Remove(usize),
@@ -90,6 +94,7 @@ where
             Ok(Command::Add(text))
         }
         "done" => parse_index_command(rest, "done", Command::Done),
+        "do" => parse_index_command(rest, "do", Command::Do),
         "uncheck" => parse_index_command(rest, "uncheck", Command::Uncheck),
         "rm" => parse_index_command(rest, "rm", Command::Remove),
         other => Err(AppError::InvalidArgs(format!(
@@ -153,6 +158,11 @@ mod tests {
             parse_args(args(&["uncheck", "2"])).unwrap(),
             Command::Uncheck(2)
         );
+    }
+
+    #[test]
+    fn parses_do_command() {
+        assert_eq!(parse_args(args(&["do", "3"])).unwrap(), Command::Do(3));
     }
 
     #[test]

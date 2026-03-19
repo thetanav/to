@@ -22,6 +22,7 @@ to init
 to ls
 to add "implement streaming responses"
 to done 1
+to do 1
 to uncheck 1
 to scan
 to rm 2
@@ -66,6 +67,9 @@ Open: 2  Done: 0
 $ to next
 Next task: 1. implement streaming responses
 
+$ to do 1
+# launches: opencode --prompt "Task #1: implement streaming responses ..."
+
 $ to done 1
 Completed task 1: implement streaming responses
 
@@ -81,4 +85,5 @@ Added 2 tasks from git-tracked TODO comments.
 - `to` searches for `.todo` starting in the current directory and then each parent directory.
 - If no `.todo` file is found, the command tells you to run `to init` in the project root.
 - `to scan` only reads git version-controlled files.
+- `to do <number>` launches `opencode --prompt ...` from the `.todo` project root using the selected task plus a built-in agent prompt.
 - Task numbers are 1-based.

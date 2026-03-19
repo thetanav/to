@@ -115,6 +115,11 @@ impl TodoList {
             .map(|(index, task)| (index + 1, task))
     }
 
+    pub fn task(&self, index: usize) -> Result<&Task> {
+        let index = self.checked_index(index)?;
+        Ok(&self.tasks[index])
+    }
+
     pub fn tasks(&self) -> &[Task] {
         &self.tasks
     }

@@ -14,6 +14,7 @@ pub enum AppError {
     MalformedTodoLine { line: usize, content: String },
     NotGitRepository(PathBuf),
     GitCommandFailed(String),
+    CommandFailed(String),
     EmptyTask,
 }
 
@@ -43,6 +44,7 @@ impl Display for AppError {
                 path.display()
             ),
             Self::GitCommandFailed(message) => write!(f, "{message}"),
+            Self::CommandFailed(message) => write!(f, "{message}"),
             Self::EmptyTask => write!(f, "task text cannot be empty"),
         }
     }
