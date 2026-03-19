@@ -12,6 +12,8 @@ pub enum AppError {
     AlreadyInitialized(PathBuf),
     InvalidTaskIndex { index: usize, len: usize },
     MalformedTodoLine { line: usize, content: String },
+    NotGitRepository(PathBuf),
+    GitCommandFailed(String),
     EmptyTask,
 }
 
@@ -35,6 +37,12 @@ impl Display for AppError {
                 f,
                 "invalid `.todo` format on line {line}: expected `[ ] task` or `[x] task`, got `{content}`"
             ),
+            Self::NotGitRepository(path) => write!(
+                f,
+                "{} is not inside a git repository; `to scan` only works on git-tracked files",
+                path.display()
+            ),
+            Self::GitCommandFailed(message) => write!(f, "{message}"),
             Self::EmptyTask => write!(f, "task text cannot be empty"),
         }
     }

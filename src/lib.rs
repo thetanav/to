@@ -1,14 +1,17 @@
 mod cli;
 mod error;
 mod project;
+mod scan;
 mod todo;
 
+use std::collections::HashSet;
 use std::env;
 use std::io::{self, Write};
 
 use cli::Command;
 pub use error::{AppError, Result};
 use project::{find_todo_file, init_todo_file};
+use scan::scan_project;
 use todo::TodoList;
 
 pub fn run() -> Result<()> {
@@ -48,6 +51,36 @@ fn execute<W: Write>(command: Command, writer: &mut W) -> Result<()> {
                     let task = todos.mark_undone(index)?.text.clone();
                     todos.save(&todo_path)?;
                     writeln!(writer, "Unchecked task {index}: {task}")?;
+                }
+                Command::Scan => {
+                    let project_root = todo_path
+                        .parent()
+                        .unwrap_or_else(|| std::path::Path::new("."));
+                    let scanned_tasks = scan_project(project_root)?;
+                    let mut existing = todos
+                        .tasks()
+                        .iter()
+                        .map(|task| task.text.clone())
+                        .collect::<HashSet<_>>();
+                    let mut added = 0usize;
+
+                    for task in scanned_tasks {
+                        if existing.insert(task.clone()) {
+                            todos.add(task)?;
+                            added += 1;
+                        }
+                    }
+
+                    if added == 0 {
+                        writeln!(writer, "No new TODO comments found in git-tracked files.")?;
+                    } else {
+                        todos.save(&todo_path)?;
+                        writeln!(
+                            writer,
+                            "Added {added} task{} from git-tracked TODO comments.",
+                            if added == 1 { "" } else { "s" }
+                        )?;
+                    }
                 }
                 Command::Remove(index) => {
                     let task = todos.remove(index)?;

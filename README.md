@@ -11,6 +11,7 @@ to ls
 to add "implement streaming responses"
 to done 1
 to uncheck 1
+to scan
 to rm 2
 to next
 ```
@@ -21,6 +22,15 @@ to next
 [ ] implement streaming responses
 [ ] add sqlite persistence
 [x] setup CLI parser
+```
+
+## Scan TODO comments
+
+`to scan` looks through git-tracked files in the current project and imports lines containing `TODO:` into `.todo`.
+
+```rust
+// TODO: add sqlite persistence
+// TODO: implement streaming responses
 ```
 
 ## Example session
@@ -49,10 +59,14 @@ Completed task 1: implement streaming responses
 
 $ to uncheck 1
 Unchecked task 1: implement streaming responses
+
+$ to scan
+Added 2 tasks from git-tracked TODO comments.
 ```
 
 ## Notes
 
 - `to` searches for `.todo` starting in the current directory and then each parent directory.
 - If no `.todo` file is found, the command tells you to run `to init` in the project root.
+- `to scan` only reads git version-controlled files.
 - Task numbers are 1-based.

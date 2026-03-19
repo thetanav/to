@@ -30,6 +30,9 @@ Usage:
   to uncheck <number>
       Mark a task as not completed
 
+  to scan
+      Scan git-tracked files for `TODO:` comments and add them to .todo
+
   to rm <number>
       Remove a task
 
@@ -45,6 +48,7 @@ pub enum Command {
     Add(String),
     Done(usize),
     Uncheck(usize),
+    Scan,
     Remove(usize),
     Next,
 }
@@ -70,6 +74,7 @@ where
         "init" => expect_no_extra_args(rest, Command::Init),
         "ls" => expect_no_extra_args(rest, Command::List),
         "next" => expect_no_extra_args(rest, Command::Next),
+        "scan" => expect_no_extra_args(rest, Command::Scan),
         "add" => {
             if rest.is_empty() {
                 return Err(AppError::InvalidArgs(
@@ -148,6 +153,11 @@ mod tests {
             parse_args(args(&["uncheck", "2"])).unwrap(),
             Command::Uncheck(2)
         );
+    }
+
+    #[test]
+    fn parses_scan_command() {
+        assert_eq!(parse_args(args(&["scan"])).unwrap(), Command::Scan);
     }
 
     #[test]
