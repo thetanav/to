@@ -2,6 +2,18 @@
 
 `to` is a small Rust CLI for project-scoped TODO lists. It walks up from your current working directory, finds the nearest `.todo` file, and operates on that task list automatically.
 
+## Install
+
+```bash
+cargo install thetanav-to
+```
+
+That installs the executable as `to`, so you run it like:
+
+```bash
+to init
+```
+
 ## Usage
 
 ```bash

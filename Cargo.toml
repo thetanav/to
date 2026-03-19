@@ -1,6 +1,20 @@
 [package]
-name = "to"
+name = "tto"
 version = "0.1.0"
 edition = "2021"
+description = "`to` is a small Rust CLI for project-scoped TODO lists. It walks up from your current working directory, finds the nearest `.todo` file, and operates on that task list automatically."
+license = "MIT"
+repository = "https://github.com/thetanav/to"
+readme = "README.md"
+keywords = ["cli", "todo", "agents", "task-runner"]
+categories = ["command-line-utilities"]
+
+[lib]
+name = "to"
+path = "src/lib.rs"
+
+[[bin]]
+name = "to"
+path = "src/main.rs"
 
 [dependencies]
