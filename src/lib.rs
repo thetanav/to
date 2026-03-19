@@ -6,7 +6,7 @@ mod todo;
 
 use std::collections::HashSet;
 use std::env;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use std::process::Command as ProcessCommand;
 
@@ -24,13 +24,30 @@ and report what changed plus any follow-up work.";
 pub fn run() -> Result<()> {
     let command = cli::parse_args(env::args_os().skip(1))?;
     let cwd = env::current_dir()?;
-    execute(command, &cwd, &mut io::stdout(), launch_opencode)
+    let mut stdout = io::stdout();
+    let use_color = stdout.is_terminal() && env::var_os("NO_COLOR").is_none();
+    execute(
+        command,
+        &cwd,
+        &mut stdout,
+        use_color,
+        launch_opencode,
+        switch_to_task_branch,
+    )
 }
 
-fn execute<W, F>(command: Command, cwd: &Path, writer: &mut W, mut run_opencode: F) -> Result<()>
+fn execute<W, F, G>(
+    command: Command,
+    cwd: &Path,
+    writer: &mut W,
+    use_color: bool,
+    mut run_opencode: F,
+    mut switch_branch: G,
+) -> Result<()>
 where
     W: Write,
     F: FnMut(&Path, &str) -> Result<()>,
+    G: FnMut(&Path, usize) -> Result<String>,
 {
     match command {
         Command::Help => {
@@ -38,36 +55,92 @@ where
         }
         Command::Init => {
             let path = init_todo_file(cwd)?;
-            writeln!(writer, "Initialized {}", path.display())?;
+            writeln!(
+                writer,
+                "{} {}",
+                styled(use_color, "1;34", "Initialized"),
+                path.display()
+            )?;
         }
         other => {
             let todo_path = find_todo_file(cwd)?;
             let mut todos = TodoList::load(&todo_path)?;
 
             match other {
-                Command::List => write_task_list(writer, &todo_path, &todos)?,
+                Command::List(query) => {
+                    write_task_list(writer, &todo_path, &todos, query.as_deref(), use_color)?
+                }
                 Command::Add(text) => {
                     let index = todos.add(text)?;
                     let task = &todos.tasks()[index - 1];
                     todos.save(&todo_path)?;
-                    writeln!(writer, "Added task {index}: {}", task.text)?;
+                    writeln!(
+                        writer,
+                        "{} task {index}: {}",
+                        styled(use_color, "36", "Added"),
+                        task.text
+                    )?;
                 }
-                Command::Done(index) => {
-                    let task = todos.mark_done(index)?.text.clone();
+                Command::Done(indices) => {
+                    let indices = validate_task_indices(&todos, &indices)?;
+                    let mut completed = Vec::new();
+
+                    for index in indices {
+                        let task = todos.mark_done(index)?.text.clone();
+                        completed.push((index, task));
+                    }
+
                     todos.save(&todo_path)?;
-                    writeln!(writer, "Completed task {index}: {task}")?;
+                    for (index, task) in completed {
+                        writeln!(
+                            writer,
+                            "{} task {index}: {task}",
+                            styled(use_color, "32", "Completed")
+                        )?;
+                    }
                 }
-                Command::Do(index) => {
-                    let task = todos.task(index)?;
-                    let prompt = build_opencode_prompt(index, &task.text);
+                Command::Do {
+                    index,
+                    create_branch,
+                } => {
+                    let task = todos.task(index)?.text.clone();
+                    let prompt = build_opencode_prompt(index, &task);
                     let project_root = todo_path.parent().unwrap_or(cwd);
+
+                    if create_branch {
+                        let branch_name = switch_branch(project_root, index)?;
+                        writeln!(
+                            writer,
+                            "{} {}",
+                            styled(use_color, "35", "Switched to branch"),
+                            branch_name
+                        )?;
+                    }
+
                     run_opencode(project_root, &prompt)?;
-                    writeln!(writer, "Spawned agent for task {index}: {}", task.text)?;
+                    writeln!(
+                        writer,
+                        "{} task {index}: {task}",
+                        styled(use_color, "34", "Spawned agent for")
+                    )?;
                 }
-                Command::Uncheck(index) => {
-                    let task = todos.mark_undone(index)?.text.clone();
+                Command::Uncheck(indices) => {
+                    let indices = validate_task_indices(&todos, &indices)?;
+                    let mut unchecked = Vec::new();
+
+                    for index in indices {
+                        let task = todos.mark_undone(index)?.text.clone();
+                        unchecked.push((index, task));
+                    }
+
                     todos.save(&todo_path)?;
-                    writeln!(writer, "Unchecked task {index}: {task}")?;
+                    for (index, task) in unchecked {
+                        writeln!(
+                            writer,
+                            "{} task {index}: {task}",
+                            styled(use_color, "33", "Unchecked")
+                        )?;
+                    }
                 }
                 Command::Scan => {
                     let project_root = todo_path
@@ -94,21 +167,50 @@ where
                         todos.save(&todo_path)?;
                         writeln!(
                             writer,
-                            "Added {added} task{} from git-tracked TODO comments.",
+                            "{} {added} task{} from git-tracked TODO comments.",
+                            styled(use_color, "36", "Added"),
                             if added == 1 { "" } else { "s" }
                         )?;
                     }
                 }
-                Command::Remove(index) => {
-                    let task = todos.remove(index)?;
+                Command::Remove(indices) => {
+                    let indices = validate_task_indices(&todos, &indices)?;
+                    let mut removal_order = indices.clone();
+                    removal_order.sort_unstable_by(|left, right| right.cmp(left));
+
+                    let mut removed = Vec::new();
+                    for index in removal_order {
+                        let task = todos.remove(index)?;
+                        removed.push((index, task.text));
+                    }
+
                     todos.save(&todo_path)?;
-                    writeln!(writer, "Removed task {index}: {}", task.text)?;
+                    for index in indices {
+                        let (_, task) = removed
+                            .iter()
+                            .find(|(removed_index, _)| *removed_index == index)
+                            .expect("validated task should have been removed");
+                        writeln!(
+                            writer,
+                            "{} task {index}: {task}",
+                            styled(use_color, "31", "Removed")
+                        )?;
+                    }
                 }
                 Command::Next => {
                     if let Some((index, task)) = todos.next_open_task() {
-                        writeln!(writer, "Next task: {index}. {}", task.text)?;
+                        writeln!(
+                            writer,
+                            "{} {index}. {}",
+                            styled(use_color, "33", "Next task:"),
+                            task.text
+                        )?;
                     } else {
-                        writeln!(writer, "All tasks are complete.")?;
+                        writeln!(
+                            writer,
+                            "{}",
+                            styled(use_color, "32", "All tasks are complete.")
+                        )?;
                     }
                 }
                 Command::Help | Command::Init => unreachable!("handled above"),
@@ -145,30 +247,189 @@ fn launch_opencode(project_root: &Path, prompt: &str) -> Result<()> {
     }
 }
 
+fn switch_to_task_branch(project_root: &Path, index: usize) -> Result<String> {
+    let branch_name = format!("task-{index}");
+
+    if git_branch_exists(project_root, &branch_name)? {
+        run_git_command(
+            project_root,
+            &["switch", &branch_name],
+            &format!("failed to switch to branch `{branch_name}`"),
+        )?;
+    } else {
+        run_git_command(
+            project_root,
+            &["switch", "-c", &branch_name],
+            &format!("failed to create branch `{branch_name}`"),
+        )?;
+    }
+
+    Ok(branch_name)
+}
+
+fn git_branch_exists(project_root: &Path, branch_name: &str) -> Result<bool> {
+    let output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(project_root)
+        .arg("branch")
+        .arg("--list")
+        .arg("--format=%(refname:short)")
+        .arg(branch_name)
+        .output()?;
+
+    if !output.status.success() {
+        return Err(AppError::GitCommandFailed(format!(
+            "failed to inspect git branches: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .any(|line| line.trim() == branch_name))
+}
+
+fn run_git_command(project_root: &Path, args: &[&str], failure_message: &str) -> Result<()> {
+    let output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(project_root)
+        .args(args)
+        .output()?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        Err(AppError::GitCommandFailed(format!(
+            "{failure_message}: git exited with status {}",
+            output.status
+        )))
+    } else {
+        Err(AppError::GitCommandFailed(format!(
+            "{failure_message}: {stderr}"
+        )))
+    }
+}
+
 fn write_task_list<W: Write>(
     writer: &mut W,
-    todo_path: &std::path::Path,
+    todo_path: &Path,
     todos: &TodoList,
+    query: Option<&str>,
+    use_color: bool,
 ) -> Result<()> {
-    writeln!(writer, "Tasks from {}", todo_path.display())?;
+    writeln!(
+        writer,
+        "{}",
+        styled(
+            use_color,
+            "1;34",
+            &format!("Tasks from {}", todo_path.display())
+        )
+    )?;
 
     if todos.tasks().is_empty() {
         writeln!(writer, "No tasks yet.")?;
         return Ok(());
     }
 
-    for (index, task) in todos.tasks().iter().enumerate() {
-        let marker = if task.done { "[x]" } else { "[ ]" };
-        writeln!(writer, "{}. {} {}", index + 1, marker, task.text)?;
+    if let Some(query) = query {
+        writeln!(writer, "{} \"{query}\"", styled(use_color, "36", "Filter:"))?;
     }
 
-    writeln!(
-        writer,
-        "Open: {}  Done: {}",
-        todos.open_count(),
-        todos.done_count()
-    )?;
+    let query = query.map(|value| value.to_lowercase());
+    let mut matches = 0usize;
+    let mut open = 0usize;
+    let mut done = 0usize;
+
+    for (index, task) in todos.tasks().iter().enumerate() {
+        let matches_query = query
+            .as_ref()
+            .map(|value| task.text.to_lowercase().contains(value))
+            .unwrap_or(true);
+
+        if !matches_query {
+            continue;
+        }
+
+        matches += 1;
+        if task.done {
+            done += 1;
+        } else {
+            open += 1;
+        }
+
+        writeln!(
+            writer,
+            "{}. {} {}",
+            index + 1,
+            task_marker(task.done, use_color),
+            task.text
+        )?;
+    }
+
+    if let Some(query) = query {
+        if matches == 0 {
+            writeln!(writer, "No tasks matching \"{query}\".")?;
+        }
+        writeln!(
+            writer,
+            "{} {}  {} {}  {} {}",
+            styled(use_color, "36", "Matches:"),
+            matches,
+            styled(use_color, "33", "Open:"),
+            open,
+            styled(use_color, "32", "Done:"),
+            done
+        )?;
+    } else {
+        writeln!(
+            writer,
+            "{} {}  {} {}",
+            styled(use_color, "33", "Open:"),
+            open,
+            styled(use_color, "32", "Done:"),
+            done
+        )?;
+    }
+
     Ok(())
+}
+
+fn validate_task_indices(todos: &TodoList, indices: &[usize]) -> Result<Vec<usize>> {
+    let indices = unique_indices(indices);
+    for &index in &indices {
+        let _ = todos.task(index)?;
+    }
+    Ok(indices)
+}
+
+fn unique_indices(indices: &[usize]) -> Vec<usize> {
+    let mut unique = Vec::new();
+    for &index in indices {
+        if !unique.contains(&index) {
+            unique.push(index);
+        }
+    }
+    unique
+}
+
+fn task_marker(done: bool, use_color: bool) -> String {
+    if done {
+        styled(use_color, "32", "[x]")
+    } else {
+        styled(use_color, "33", "[ ]")
+    }
+}
+
+fn styled(use_color: bool, code: &str, text: &str) -> String {
+    if use_color {
+        format!("\u{1b}[{code}m{text}\u{1b}[0m")
+    } else {
+        text.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -200,6 +461,15 @@ mod tests {
         }
     }
 
+    fn run_git(path: &Path, args: &[&str]) {
+        let status = ProcessCommand::new("git")
+            .args(args)
+            .current_dir(path)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git command failed: {:?}", args);
+    }
+
     #[test]
     fn help_command_writes_usage() {
         let mut output = Vec::new();
@@ -207,13 +477,16 @@ mod tests {
             Command::Help,
             Path::new("."),
             &mut output,
+            false,
             |_root, _prompt| Ok(()),
+            |_root, index| Ok(format!("task-{index}")),
         )
         .unwrap();
 
         let rendered = String::from_utf8(output).unwrap();
-        assert!(rendered.contains("to ls"));
+        assert!(rendered.contains("to ls [query]"));
         assert!(rendered.contains("to init"));
+        assert!(rendered.contains("to do [-b] <number>"));
     }
 
     #[test]
@@ -235,13 +508,18 @@ mod tests {
         let mut observed_call = None;
 
         execute(
-            Command::Do(1),
+            Command::Do {
+                index: 1,
+                create_branch: false,
+            },
             &nested,
             &mut output,
+            false,
             |project_root, prompt| {
                 observed_call = Some((project_root.to_path_buf(), prompt.to_string()));
                 Ok(())
             },
+            |_root, index| Ok(format!("task-{index}")),
         )
         .unwrap();
 
@@ -251,5 +529,131 @@ mod tests {
         let (project_root, prompt) = observed_call.expect("expected opencode to be invoked");
         assert_eq!(project_root, project);
         assert!(prompt.contains("Task #1: implement agent runner"));
+    }
+
+    #[test]
+    fn list_command_filters_tasks_by_query() {
+        let temp = TempDir::new("list-filter");
+        fs::write(
+            temp.path.join(".todo"),
+            "[ ] branch work\n[x] docs cleanup\n[ ] branch follow-up\n",
+        )
+        .unwrap();
+
+        let mut output = Vec::new();
+        execute(
+            Command::List(Some("branch".to_string())),
+            &temp.path,
+            &mut output,
+            false,
+            |_root, _prompt| Ok(()),
+            |_root, index| Ok(format!("task-{index}")),
+        )
+        .unwrap();
+
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(rendered.contains("Filter: \"branch\""));
+        assert!(rendered.contains("1. [ ] branch work"));
+        assert!(rendered.contains("3. [ ] branch follow-up"));
+        assert!(!rendered.contains("docs cleanup"));
+        assert!(rendered.contains("Matches: 2  Open: 2  Done: 0"));
+    }
+
+    #[test]
+    fn done_command_supports_multiple_indices() {
+        let temp = TempDir::new("done-many");
+        fs::write(
+            temp.path.join(".todo"),
+            "[ ] first\n[ ] second\n[ ] third\n",
+        )
+        .unwrap();
+
+        let mut output = Vec::new();
+        execute(
+            Command::Done(vec![1, 3]),
+            &temp.path,
+            &mut output,
+            false,
+            |_root, _prompt| Ok(()),
+            |_root, index| Ok(format!("task-{index}")),
+        )
+        .unwrap();
+
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(rendered.contains("Completed task 1: first"));
+        assert!(rendered.contains("Completed task 3: third"));
+
+        let saved = fs::read_to_string(temp.path.join(".todo")).unwrap();
+        assert_eq!(saved, "[x] first\n[ ] second\n[x] third\n");
+    }
+
+    #[test]
+    fn remove_command_supports_multiple_indices() {
+        let temp = TempDir::new("remove-many");
+        fs::write(
+            temp.path.join(".todo"),
+            "[ ] first\n[ ] second\n[ ] third\n",
+        )
+        .unwrap();
+
+        let mut output = Vec::new();
+        execute(
+            Command::Remove(vec![1, 3]),
+            &temp.path,
+            &mut output,
+            false,
+            |_root, _prompt| Ok(()),
+            |_root, index| Ok(format!("task-{index}")),
+        )
+        .unwrap();
+
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(rendered.contains("Removed task 1: first"));
+        assert!(rendered.contains("Removed task 3: third"));
+
+        let saved = fs::read_to_string(temp.path.join(".todo")).unwrap();
+        assert_eq!(saved, "[ ] second\n");
+    }
+
+    #[test]
+    fn do_command_can_switch_to_task_branch() {
+        let temp = TempDir::new("do-branch");
+        let project = temp.path.join("workspace");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(project.join(".todo"), "[ ] branch task\n").unwrap();
+
+        run_git(&project, &["init", "-b", "main"]);
+        run_git(&project, &["config", "user.email", "test@example.com"]);
+        run_git(&project, &["config", "user.name", "Test User"]);
+        run_git(&project, &["add", ".todo"]);
+        run_git(&project, &["commit", "-m", "initial"]);
+
+        let mut output = Vec::new();
+        execute(
+            Command::Do {
+                index: 1,
+                create_branch: true,
+            },
+            &project,
+            &mut output,
+            false,
+            |_root, _prompt| Ok(()),
+            switch_to_task_branch,
+        )
+        .unwrap();
+
+        let branch = ProcessCommand::new("git")
+            .arg("-C")
+            .arg(&project)
+            .arg("branch")
+            .arg("--show-current")
+            .output()
+            .unwrap();
+        assert!(branch.status.success());
+        assert_eq!(String::from_utf8_lossy(&branch.stdout).trim(), "task-1");
+
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(rendered.contains("Switched to branch task-1"));
+        assert!(rendered.contains("Spawned agent for task 1: branch task"));
     }
 }

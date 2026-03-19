@@ -18,26 +18,26 @@ Usage:
   to init
       Create a new .todo file in the current directory
 
-  to ls
-      List tasks for the current project
+  to ls [query]
+      List tasks for the current project, optionally filtered by a search query
 
   to add \"task text\"
       Add a new task
 
-  to done <number>
-      Mark a task completed
+  to done <number> [number ...]
+      Mark one or more tasks completed
 
-  to do <number>
-      Launch `opencode` for a task using the built-in agent prompt
+  to do [-b] <number>
+      Launch `opencode` for a task, optionally switching to branch `task-<number>` first
 
-  to uncheck <number>
-      Mark a task as not completed
+  to uncheck <number> [number ...]
+      Mark one or more tasks as not completed
 
   to scan
       Scan git-tracked files for `TODO:` comments and add them to .todo
 
-  to rm <number>
-      Remove a task
+  to rm <number> [number ...]
+      Remove one or more tasks
 
   to next
       Show the first unfinished task
@@ -47,13 +47,13 @@ Usage:
 pub enum Command {
     Help,
     Init,
-    List,
+    List(Option<String>),
     Add(String),
-    Done(usize),
-    Do(usize),
-    Uncheck(usize),
+    Done(Vec<usize>),
+    Do { index: usize, create_branch: bool },
+    Uncheck(Vec<usize>),
     Scan,
-    Remove(usize),
+    Remove(Vec<usize>),
     Next,
 }
 
@@ -76,7 +76,7 @@ where
     match command.as_str() {
         "help" | "-h" | "--help" => Ok(Command::Help),
         "init" => expect_no_extra_args(rest, Command::Init),
-        "ls" => expect_no_extra_args(rest, Command::List),
+        "ls" => parse_list_command(rest),
         "next" => expect_no_extra_args(rest, Command::Next),
         "scan" => expect_no_extra_args(rest, Command::Scan),
         "add" => {
@@ -93,13 +93,24 @@ where
 
             Ok(Command::Add(text))
         }
-        "done" => parse_index_command(rest, "done", Command::Done),
-        "do" => parse_index_command(rest, "do", Command::Do),
-        "uncheck" => parse_index_command(rest, "uncheck", Command::Uncheck),
-        "rm" => parse_index_command(rest, "rm", Command::Remove),
+        "done" => parse_indices_command(rest, "done", Command::Done),
+        "do" => parse_do_command(rest),
+        "uncheck" => parse_indices_command(rest, "uncheck", Command::Uncheck),
+        "rm" => parse_indices_command(rest, "rm", Command::Remove),
         other => Err(AppError::InvalidArgs(format!(
             "unknown command `{other}`: run `to` for usage"
         ))),
+    }
+}
+
+fn parse_list_command(rest: &[String]) -> Result<Command> {
+    let query = rest.join(" ");
+    let query = query.trim();
+
+    if query.is_empty() {
+        Ok(Command::List(None))
+    } else {
+        Ok(Command::List(Some(query.to_string())))
     }
 }
 
@@ -111,24 +122,70 @@ fn expect_no_extra_args(rest: &[String], command: Command) -> Result<Command> {
     }
 }
 
-fn parse_index_command(
+fn parse_indices_command(
     rest: &[String],
     name: &str,
-    constructor: fn(usize) -> Command,
+    constructor: fn(Vec<usize>) -> Command,
 ) -> Result<Command> {
-    if rest.len() != 1 {
+    if rest.is_empty() {
         return Err(AppError::InvalidArgs(format!(
-            "usage: `to {name} <number>`"
+            "usage: `to {name} <number> [number ...]`"
         )));
     }
 
-    let index = rest[0].parse::<usize>().map_err(|_| {
-        AppError::InvalidArgs(format!(
-            "task number must be a positive integer for `{name}`"
-        ))
-    })?;
+    let indices = rest
+        .iter()
+        .map(|value| {
+            value.parse::<usize>().map_err(|_| {
+                AppError::InvalidArgs(format!(
+                    "task number must be a positive integer for `{name}`"
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
 
-    Ok(constructor(index))
+    Ok(constructor(indices))
+}
+
+fn parse_do_command(rest: &[String]) -> Result<Command> {
+    if rest.is_empty() {
+        return Err(do_usage_error());
+    }
+
+    let mut create_branch = false;
+    let mut index = None;
+
+    for value in rest {
+        match value.as_str() {
+            "-b" | "--branch" => {
+                if create_branch {
+                    return Err(do_usage_error());
+                }
+                create_branch = true;
+            }
+            _ => {
+                if index.is_some() {
+                    return Err(do_usage_error());
+                }
+
+                index = Some(value.parse::<usize>().map_err(|_| {
+                    AppError::InvalidArgs(
+                        "task number must be a positive integer for `do`".to_string(),
+                    )
+                })?);
+            }
+        }
+    }
+
+    let index = index.ok_or_else(do_usage_error)?;
+    Ok(Command::Do {
+        index,
+        create_branch,
+    })
+}
+
+fn do_usage_error() -> AppError {
+    AppError::InvalidArgs("usage: `to do [-b] <number>`".to_string())
 }
 
 #[cfg(test)]
@@ -156,13 +213,53 @@ mod tests {
     fn parses_uncheck_command() {
         assert_eq!(
             parse_args(args(&["uncheck", "2"])).unwrap(),
-            Command::Uncheck(2)
+            Command::Uncheck(vec![2])
         );
     }
 
     #[test]
     fn parses_do_command() {
-        assert_eq!(parse_args(args(&["do", "3"])).unwrap(), Command::Do(3));
+        assert_eq!(
+            parse_args(args(&["do", "3"])).unwrap(),
+            Command::Do {
+                index: 3,
+                create_branch: false
+            }
+        );
+    }
+
+    #[test]
+    fn parses_do_command_with_branch_flag() {
+        assert_eq!(
+            parse_args(args(&["do", "-b", "3"])).unwrap(),
+            Command::Do {
+                index: 3,
+                create_branch: true
+            }
+        );
+        assert_eq!(
+            parse_args(args(&["do", "3", "-b"])).unwrap(),
+            Command::Do {
+                index: 3,
+                create_branch: true
+            }
+        );
+    }
+
+    #[test]
+    fn parses_list_query() {
+        assert_eq!(
+            parse_args(args(&["ls", "branch"])).unwrap(),
+            Command::List(Some("branch".to_string()))
+        );
+    }
+
+    #[test]
+    fn parses_done_command_with_multiple_indices() {
+        assert_eq!(
+            parse_args(args(&["done", "1", "3"])).unwrap(),
+            Command::Done(vec![1, 3])
+        );
     }
 
     #[test]

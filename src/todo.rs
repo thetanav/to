@@ -124,14 +124,6 @@ impl TodoList {
         &self.tasks
     }
 
-    pub fn open_count(&self) -> usize {
-        self.tasks.iter().filter(|task| !task.done).count()
-    }
-
-    pub fn done_count(&self) -> usize {
-        self.tasks.iter().filter(|task| task.done).count()
-    }
-
     fn task_mut(&mut self, index: usize) -> Result<&mut Task> {
         let index = self.checked_index(index)?;
         Ok(&mut self.tasks[index])

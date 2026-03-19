@@ -20,12 +20,14 @@ to init
 to
 to init
 to ls
+to ls branch
 to add "implement streaming responses"
-to done 1
+to done 1 2
 to do 1
-to uncheck 1
+to do -b 1
+to uncheck 1 2
 to scan
-to rm 2
+to rm 2 3
 to next
 ```
 
@@ -64,17 +66,28 @@ Tasks from /projects/api/.todo
 2. [ ] add sqlite persistence
 Open: 2  Done: 0
 
+$ to ls sqlite
+Tasks from /projects/api/.todo
+Filter: "sqlite"
+2. [ ] add sqlite persistence
+Matches: 1  Open: 1  Done: 0
+
 $ to next
 Next task: 1. implement streaming responses
 
 $ to do 1
 # launches: opencode --prompt "Task #1: implement streaming responses ..."
 
-$ to done 1
-Completed task 1: implement streaming responses
+$ to do -b 1
+# switches to branch `task-1`, then launches opencode
 
-$ to uncheck 1
+$ to done 1 2
+Completed task 1: implement streaming responses
+Completed task 2: add sqlite persistence
+
+$ to uncheck 1 2
 Unchecked task 1: implement streaming responses
+Unchecked task 2: add sqlite persistence
 
 $ to scan
 Added 2 tasks from git-tracked TODO comments.
@@ -85,5 +98,7 @@ Added 2 tasks from git-tracked TODO comments.
 - `to` searches for `.todo` starting in the current directory and then each parent directory.
 - If no `.todo` file is found, the command tells you to run `to init` in the project root.
 - `to scan` only reads git version-controlled files.
-- `to do <number>` launches `opencode --prompt ...` from the `.todo` project root using the selected task plus a built-in agent prompt.
+- `to ls [query]` filters task text while preserving the original task numbers.
+- `to do [-b] <number>` launches `opencode --prompt ...` from the `.todo` project root using the selected task plus a built-in agent prompt. With `-b`, it switches to branch `task-<number>` first.
+- `to done`, `to uncheck`, and `to rm` accept multiple task numbers.
 - Task numbers are 1-based.
