@@ -262,13 +262,13 @@ fn switch_to_task_branch(project_root: &Path, branch_name: &str) -> Result<Strin
     if git_branch_exists(project_root, &branch_name)? {
         run_git_command(
             project_root,
-            &["switch", branch_name],
+            &["checkout", branch_name],
             &format!("failed to switch to branch `{branch_name}`"),
         )?;
     } else {
         run_git_command(
             project_root,
-            &["switch", "-c", branch_name],
+            &["checkout", "-b", branch_name],
             &format!("failed to create branch `{branch_name}`"),
         )?;
     }
