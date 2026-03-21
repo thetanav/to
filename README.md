@@ -23,8 +23,8 @@ to ls
 to ls branch
 to add "implement streaming responses"
 to done 1 2
-to do 1
-to do -b 1
+to do 1 2
+to do 1 2 -b feature/batch-work
 to uncheck 1 2
 to scan
 to rm 2 3
@@ -75,11 +75,11 @@ Matches: 1  Open: 1  Done: 0
 $ to next
 Next task: 1. implement streaming responses
 
-$ to do 1
-# launches: opencode --prompt "Task #1: implement streaming responses ..."
+$ to do 1 2
+# launches opencode with a prompt telling it to do tasks 1 and 2 and use `to` to inspect the todo list
 
-$ to do -b 1
-# switches to branch `task-1`, then launches opencode
+$ to do 1 2 -b feature/batch-work
+# switches to branch `feature/batch-work`, then launches opencode
 
 $ to done 1 2
 Completed task 1: implement streaming responses
@@ -99,6 +99,6 @@ Added 2 tasks from git-tracked TODO comments.
 - If no `.todo` file is found, the command tells you to run `to init` in the project root.
 - `to scan` only reads git version-controlled files.
 - `to ls [query]` filters task text while preserving the original task numbers.
-- `to do [-b] <number>` launches `opencode --prompt ...` from the `.todo` project root using the selected task plus a built-in agent prompt. With `-b`, it switches to branch `task-<number>` first.
+- `to do <number> [number ...] [-b <branch-name>]` launches `opencode --prompt ...` from the `.todo` project root with the selected task numbers and a built-in agent prompt that tells the agent to use `to` to inspect the todo list. With `-b`, it switches to the named branch first, creating it when needed.
 - `to done`, `to uncheck`, and `to rm` accept multiple task numbers.
 - Task numbers are 1-based.

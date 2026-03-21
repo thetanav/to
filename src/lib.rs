@@ -47,7 +47,7 @@ fn execute<W, F, G>(
 where
     W: Write,
     F: FnMut(&Path, &str) -> Result<()>,
-    G: FnMut(&Path, usize) -> Result<String>,
+    G: FnMut(&Path, &str) -> Result<String>,
 {
     match command {
         Command::Help => {
@@ -100,15 +100,15 @@ where
                     }
                 }
                 Command::Do {
-                    index,
-                    create_branch,
+                    indices,
+                    branch_name,
                 } => {
-                    let task = todos.task(index)?.text.clone();
-                    let prompt = build_opencode_prompt(index, &task);
+                    let indices = validate_task_indices(&todos, &indices)?;
+                    let prompt = build_opencode_prompt(&indices);
                     let project_root = todo_path.parent().unwrap_or(cwd);
 
-                    if create_branch {
-                        let branch_name = switch_branch(project_root, index)?;
+                    if let Some(branch_name) = branch_name.as_deref() {
+                        let branch_name = switch_branch(project_root, branch_name)?;
                         writeln!(
                             writer,
                             "{} {}",
@@ -118,11 +118,14 @@ where
                     }
 
                     run_opencode(project_root, &prompt)?;
-                    writeln!(
-                        writer,
-                        "{} task {index}: {task}",
-                        styled(use_color, "34", "Spawned agent for")
-                    )?;
+                    for index in indices {
+                        let task = todos.task(index)?.text.clone();
+                        writeln!(
+                            writer,
+                            "{} task {index}: {task}",
+                            styled(use_color, "34", "Spawned agent for")
+                        )?;
+                    }
                 }
                 Command::Uncheck(indices) => {
                     let indices = validate_task_indices(&todos, &indices)?;
@@ -221,8 +224,16 @@ where
     Ok(())
 }
 
-fn build_opencode_prompt(index: usize, task: &str) -> String {
-    format!("Task #{index}: {task}\n\n{OPENCODE_AGENT_PROMPT}")
+fn build_opencode_prompt(indices: &[usize]) -> String {
+    let task_numbers = indices
+        .iter()
+        .map(|index| index.to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    format!(
+        "do all the tasks that are numbered {task_numbers} use `to` for seeing todo\n\n{OPENCODE_AGENT_PROMPT}"
+    )
 }
 
 fn launch_opencode(project_root: &Path, prompt: &str) -> Result<()> {
@@ -247,24 +258,22 @@ fn launch_opencode(project_root: &Path, prompt: &str) -> Result<()> {
     }
 }
 
-fn switch_to_task_branch(project_root: &Path, index: usize) -> Result<String> {
-    let branch_name = format!("task-{index}");
-
+fn switch_to_task_branch(project_root: &Path, branch_name: &str) -> Result<String> {
     if git_branch_exists(project_root, &branch_name)? {
         run_git_command(
             project_root,
-            &["switch", &branch_name],
+            &["switch", branch_name],
             &format!("failed to switch to branch `{branch_name}`"),
         )?;
     } else {
         run_git_command(
             project_root,
-            &["switch", "-c", &branch_name],
+            &["switch", "-c", branch_name],
             &format!("failed to create branch `{branch_name}`"),
         )?;
     }
 
-    Ok(branch_name)
+    Ok(branch_name.to_string())
 }
 
 fn git_branch_exists(project_root: &Path, branch_name: &str) -> Result<bool> {
@@ -479,20 +488,20 @@ mod tests {
             &mut output,
             false,
             |_root, _prompt| Ok(()),
-            |_root, index| Ok(format!("task-{index}")),
+            |_root, branch_name| Ok(branch_name.to_string()),
         )
         .unwrap();
 
         let rendered = String::from_utf8(output).unwrap();
         assert!(rendered.contains("to ls [query]"));
         assert!(rendered.contains("to init"));
-        assert!(rendered.contains("to do [-b] <number>"));
+        assert!(rendered.contains("to do <number> [number ...] [-b <branch-name>]"));
     }
 
     #[test]
-    fn builds_opencode_prompt_from_task() {
-        let prompt = build_opencode_prompt(4, "implement agent runner");
-        assert!(prompt.contains("Task #4: implement agent runner"));
+    fn builds_opencode_prompt_from_indices() {
+        let prompt = build_opencode_prompt(&[4, 7]);
+        assert!(prompt.contains("do all the tasks that are numbered 4 7 use `to` for seeing todo"));
         assert!(prompt.contains("Inspect the codebase before making changes"));
     }
 
@@ -502,15 +511,19 @@ mod tests {
         let project = temp.path.join("workspace");
         let nested = project.join("service").join("src");
         fs::create_dir_all(&nested).unwrap();
-        fs::write(project.join(".todo"), "[ ] implement agent runner\n").unwrap();
+        fs::write(
+            project.join(".todo"),
+            "[ ] implement agent runner\n[ ] update CLI parser\n",
+        )
+        .unwrap();
 
         let mut output = Vec::new();
         let mut observed_call = None;
 
         execute(
             Command::Do {
-                index: 1,
-                create_branch: false,
+                indices: vec![1, 2],
+                branch_name: None,
             },
             &nested,
             &mut output,
@@ -519,16 +532,17 @@ mod tests {
                 observed_call = Some((project_root.to_path_buf(), prompt.to_string()));
                 Ok(())
             },
-            |_root, index| Ok(format!("task-{index}")),
+            |_root, branch_name| Ok(branch_name.to_string()),
         )
         .unwrap();
 
         let rendered = String::from_utf8(output).unwrap();
         assert!(rendered.contains("Spawned agent for task 1: implement agent runner"));
+        assert!(rendered.contains("Spawned agent for task 2: update CLI parser"));
 
         let (project_root, prompt) = observed_call.expect("expected opencode to be invoked");
         assert_eq!(project_root, project);
-        assert!(prompt.contains("Task #1: implement agent runner"));
+        assert!(prompt.contains("do all the tasks that are numbered 1 2 use `to` for seeing todo"));
     }
 
     #[test]
@@ -547,7 +561,7 @@ mod tests {
             &mut output,
             false,
             |_root, _prompt| Ok(()),
-            |_root, index| Ok(format!("task-{index}")),
+            |_root, branch_name| Ok(branch_name.to_string()),
         )
         .unwrap();
 
@@ -575,7 +589,7 @@ mod tests {
             &mut output,
             false,
             |_root, _prompt| Ok(()),
-            |_root, index| Ok(format!("task-{index}")),
+            |_root, branch_name| Ok(branch_name.to_string()),
         )
         .unwrap();
 
@@ -603,7 +617,7 @@ mod tests {
             &mut output,
             false,
             |_root, _prompt| Ok(()),
-            |_root, index| Ok(format!("task-{index}")),
+            |_root, branch_name| Ok(branch_name.to_string()),
         )
         .unwrap();
 
@@ -616,11 +630,11 @@ mod tests {
     }
 
     #[test]
-    fn do_command_can_switch_to_task_branch() {
+    fn do_command_can_switch_to_named_branch() {
         let temp = TempDir::new("do-branch");
         let project = temp.path.join("workspace");
         fs::create_dir_all(&project).unwrap();
-        fs::write(project.join(".todo"), "[ ] branch task\n").unwrap();
+        fs::write(project.join(".todo"), "[ ] branch task\n[ ] second task\n").unwrap();
 
         run_git(&project, &["init", "-b", "main"]);
         run_git(&project, &["config", "user.email", "test@example.com"]);
@@ -631,8 +645,8 @@ mod tests {
         let mut output = Vec::new();
         execute(
             Command::Do {
-                index: 1,
-                create_branch: true,
+                indices: vec![1, 2],
+                branch_name: Some("feature/batch-work".to_string()),
             },
             &project,
             &mut output,
@@ -650,10 +664,14 @@ mod tests {
             .output()
             .unwrap();
         assert!(branch.status.success());
-        assert_eq!(String::from_utf8_lossy(&branch.stdout).trim(), "task-1");
+        assert_eq!(
+            String::from_utf8_lossy(&branch.stdout).trim(),
+            "feature/batch-work"
+        );
 
         let rendered = String::from_utf8(output).unwrap();
-        assert!(rendered.contains("Switched to branch task-1"));
+        assert!(rendered.contains("Switched to branch feature/batch-work"));
         assert!(rendered.contains("Spawned agent for task 1: branch task"));
+        assert!(rendered.contains("Spawned agent for task 2: second task"));
     }
 }

@@ -27,8 +27,8 @@ Usage:
   to done <number> [number ...]
       Mark one or more tasks completed
 
-  to do [-b] <number>
-      Launch `opencode` for a task, optionally switching to branch `task-<number>` first
+  to do <number> [number ...] [-b <branch-name>]
+      Launch `opencode` for one or more tasks; with `-b`, switch to the named branch first
 
   to uncheck <number> [number ...]
       Mark one or more tasks as not completed
@@ -50,7 +50,10 @@ pub enum Command {
     List(Option<String>),
     Add(String),
     Done(Vec<usize>),
-    Do { index: usize, create_branch: bool },
+    Do {
+        indices: Vec<usize>,
+        branch_name: Option<String>,
+    },
     Uncheck(Vec<usize>),
     Scan,
     Remove(Vec<usize>),
@@ -152,40 +155,53 @@ fn parse_do_command(rest: &[String]) -> Result<Command> {
         return Err(do_usage_error());
     }
 
-    let mut create_branch = false;
-    let mut index = None;
+    let mut branch_name = None;
+    let mut expect_branch_name = false;
+    let mut indices = Vec::new();
 
     for value in rest {
-        match value.as_str() {
-            "-b" | "--branch" => {
-                if create_branch {
-                    return Err(do_usage_error());
-                }
-                create_branch = true;
+        if expect_branch_name {
+            if value.trim().is_empty() {
+                return Err(AppError::InvalidArgs(
+                    "branch name for `to do -b` cannot be empty".to_string(),
+                ));
             }
-            _ => {
-                if index.is_some() {
-                    return Err(do_usage_error());
-                }
-
-                index = Some(value.parse::<usize>().map_err(|_| {
-                    AppError::InvalidArgs(
-                        "task number must be a positive integer for `do`".to_string(),
-                    )
-                })?);
-            }
+            branch_name = Some(value.clone());
+            expect_branch_name = false;
+            continue;
         }
+
+        if matches!(value.as_str(), "-b" | "--branch") {
+            if branch_name.is_some() {
+                return Err(do_usage_error());
+            }
+            expect_branch_name = true;
+            continue;
+        }
+
+        indices.push(value.parse::<usize>().map_err(|_| {
+            AppError::InvalidArgs("task number must be a positive integer for `do`".to_string())
+        })?);
     }
 
-    let index = index.ok_or_else(do_usage_error)?;
+    if indices.is_empty() {
+        return Err(do_usage_error());
+    }
+
+    if expect_branch_name {
+        return Err(AppError::InvalidArgs(
+            "missing branch name for `to do -b`: use `-b <branch-name>`".to_string(),
+        ));
+    }
+
     Ok(Command::Do {
-        index,
-        create_branch,
+        indices,
+        branch_name,
     })
 }
 
 fn do_usage_error() -> AppError {
-    AppError::InvalidArgs("usage: `to do [-b] <number>`".to_string())
+    AppError::InvalidArgs("usage: `to do <number> [number ...] [-b <branch-name>]`".to_string())
 }
 
 #[cfg(test)]
@@ -222,8 +238,8 @@ mod tests {
         assert_eq!(
             parse_args(args(&["do", "3"])).unwrap(),
             Command::Do {
-                index: 3,
-                create_branch: false
+                indices: vec![3],
+                branch_name: None
             }
         );
     }
@@ -231,18 +247,49 @@ mod tests {
     #[test]
     fn parses_do_command_with_branch_flag() {
         assert_eq!(
-            parse_args(args(&["do", "-b", "3"])).unwrap(),
+            parse_args(args(&["do", "-b", "feature/work", "3"])).unwrap(),
             Command::Do {
-                index: 3,
-                create_branch: true
+                indices: vec![3],
+                branch_name: Some("feature/work".to_string())
             }
         );
         assert_eq!(
-            parse_args(args(&["do", "3", "-b"])).unwrap(),
+            parse_args(args(&["do", "3", "-b", "feature/work"])).unwrap(),
             Command::Do {
-                index: 3,
-                create_branch: true
+                indices: vec![3],
+                branch_name: Some("feature/work".to_string())
             }
+        );
+    }
+
+    #[test]
+    fn parses_do_command_with_multiple_indices() {
+        assert_eq!(
+            parse_args(args(&["do", "3", "5"])).unwrap(),
+            Command::Do {
+                indices: vec![3, 5],
+                branch_name: None
+            }
+        );
+    }
+
+    #[test]
+    fn parses_do_command_with_multiple_indices_and_branch_name() {
+        assert_eq!(
+            parse_args(args(&["do", "3", "5", "-b", "batch-work"])).unwrap(),
+            Command::Do {
+                indices: vec![3, 5],
+                branch_name: Some("batch-work".to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_do_command_without_branch_name() {
+        let error = parse_args(args(&["do", "3", "-b"])).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "missing branch name for `to do -b`: use `-b <branch-name>`"
         );
     }
 
