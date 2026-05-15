@@ -5,7 +5,8 @@ use std::process::Command;
 use crate::error::{AppError, Result};
 
 pub fn scan_project(project_root: &Path) -> Result<Vec<String>> {
-    let git_root = git_root(project_root)?;
+    let project_root = fs::canonicalize(project_root)?;
+    let git_root = fs::canonicalize(git_root(&project_root)?)?;
     let scope = project_root
         .strip_prefix(&git_root)
         .unwrap_or_else(|_| Path::new(""));
@@ -14,7 +15,7 @@ pub fn scan_project(project_root: &Path) -> Result<Vec<String>> {
 
     for relative_path in tracked_files {
         let absolute_path = git_root.join(&relative_path);
-        if !absolute_path.starts_with(project_root) || !absolute_path.is_file() {
+        if !absolute_path.starts_with(&project_root) || !absolute_path.is_file() {
             continue;
         }
 
@@ -22,7 +23,7 @@ pub fn scan_project(project_root: &Path) -> Result<Vec<String>> {
             continue;
         }
 
-        tasks.extend(scan_file(&absolute_path, project_root)?);
+        tasks.extend(scan_file(&absolute_path, &project_root)?);
     }
 
     Ok(tasks)
@@ -36,18 +37,14 @@ fn scan_file(path: &Path, project_root: &Path) -> Result<Vec<String>> {
 
     let contents = String::from_utf8_lossy(&bytes);
     let relative_path = path.strip_prefix(project_root).unwrap_or(path);
+    let relative_path = relative_path.display().to_string().replace('\\', "/");
     let mut tasks = Vec::new();
 
     for (line_number, line) in contents.lines().enumerate() {
         if let Some((_, todo)) = line.split_once("TODO:") {
             let todo = todo.trim();
             if !todo.is_empty() {
-                tasks.push(format!(
-                    "{} ({}:{})",
-                    todo,
-                    relative_path.display(),
-                    line_number + 1
-                ));
+                tasks.push(format!("{} ({}:{})", todo, relative_path, line_number + 1));
             }
         }
     }

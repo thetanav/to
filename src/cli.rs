@@ -1,6 +1,7 @@
 use std::ffi::OsString;
 
 use crate::error::{AppError, Result};
+use crate::todo::{clean_label, Priority};
 
 pub const HELP_TEXT: &str = "\
 to - project-based TODO manager
@@ -18,17 +19,26 @@ Usage:
   to init
       Create a new .todo file in the current directory
 
-  to ls [query]
-      List tasks for the current project, optionally filtered by a search query
+  to ls [query] [--priority <high|medium|low>] [--label <label>]
+      List tasks for the current project, optionally filtered by query, priority, or label
 
   to add \"task text\"
       Add a new task
+
+  to add \"task text\" --priority <high|medium|low> --label <label>
+      Add a task with AI-friendly metadata
+
+  to add \"task text\" --parent <number>
+      Add a subtask under an existing task
 
   to done <number> [number ...]
       Mark one or more tasks completed
 
   to do <number> [number ...] [-b <branch-name>]
       Launch `opencode` for one or more tasks; with `-b`, switch to the named branch first
+
+  to do <number> [number ...] --create-branch
+      Launch `opencode` after creating/switching to feature/<task-slug>
 
   to uncheck <number> [number ...]
       Mark one or more tasks as not completed
@@ -41,23 +51,40 @@ Usage:
 
   to next
       Show the first unfinished task
+
+  to tree <number>
+      Show a task and its subtasks
 ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Help,
     Init,
-    List(Option<String>),
-    Add(String),
+    List(ListOptions),
+    Add {
+        text: String,
+        parent: Option<usize>,
+        priority: Option<Priority>,
+        labels: Vec<String>,
+    },
     Done(Vec<usize>),
     Do {
         indices: Vec<usize>,
         branch_name: Option<String>,
+        create_branch: bool,
     },
     Uncheck(Vec<usize>),
     Scan,
     Remove(Vec<usize>),
     Next,
+    Tree(usize),
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ListOptions {
+    pub query: Option<String>,
+    pub priority: Option<Priority>,
+    pub labels: Vec<String>,
 }
 
 pub fn parse_args<I>(args: I) -> Result<Command>
@@ -82,24 +109,12 @@ where
         "ls" => parse_list_command(rest),
         "next" => expect_no_extra_args(rest, Command::Next),
         "scan" => expect_no_extra_args(rest, Command::Scan),
-        "add" => {
-            if rest.is_empty() {
-                return Err(AppError::InvalidArgs(
-                    "missing task text: use `to add \"task text\"`".to_string(),
-                ));
-            }
-
-            let text = rest.join(" ");
-            if text.trim().is_empty() {
-                return Err(AppError::EmptyTask);
-            }
-
-            Ok(Command::Add(text))
-        }
+        "add" => parse_add_command(rest),
         "done" => parse_indices_command(rest, "done", Command::Done),
         "do" => parse_do_command(rest),
         "uncheck" => parse_indices_command(rest, "uncheck", Command::Uncheck),
         "rm" => parse_indices_command(rest, "rm", Command::Remove),
+        "tree" => parse_tree_command(rest),
         other => Err(AppError::InvalidArgs(format!(
             "unknown command `{other}`: run `to` for usage"
         ))),
@@ -107,14 +122,172 @@ where
 }
 
 fn parse_list_command(rest: &[String]) -> Result<Command> {
-    let query = rest.join(" ");
-    let query = query.trim();
+    let mut options = ListOptions::default();
+    let mut expect_priority = false;
+    let mut expect_label = false;
+    let mut query_parts = Vec::new();
 
-    if query.is_empty() {
-        Ok(Command::List(None))
-    } else {
-        Ok(Command::List(Some(query.to_string())))
+    for value in rest {
+        if expect_priority {
+            options.priority = Some(Priority::parse(value)?);
+            expect_priority = false;
+            continue;
+        }
+
+        if expect_label {
+            append_labels(&mut options.labels, value)?;
+            expect_label = false;
+            continue;
+        }
+
+        match value.as_str() {
+            "--priority" | "-P" => {
+                if options.priority.is_some() {
+                    return Err(list_usage_error());
+                }
+                expect_priority = true;
+            }
+            "--label" | "-l" => {
+                expect_label = true;
+            }
+            _ => query_parts.push(value.clone()),
+        }
     }
+
+    if expect_priority {
+        return Err(AppError::InvalidArgs(
+            "missing priority: use `--priority <high|medium|low>`".to_string(),
+        ));
+    }
+
+    if expect_label {
+        return Err(AppError::InvalidArgs(
+            "missing label: use `--label <label>`".to_string(),
+        ));
+    }
+
+    let query = query_parts.join(" ");
+    let query = query.trim();
+    if query.is_empty() {
+        options.query = None;
+    } else {
+        options.query = Some(query.to_string());
+    }
+
+    Ok(Command::List(options))
+}
+
+fn parse_add_command(rest: &[String]) -> Result<Command> {
+    if rest.is_empty() {
+        return Err(AppError::InvalidArgs(
+            "missing task text: use `to add \"task text\"`".to_string(),
+        ));
+    }
+
+    let mut parent = None;
+    let mut priority = None;
+    let mut labels = Vec::new();
+    let mut expect_parent = false;
+    let mut expect_priority = false;
+    let mut expect_label = false;
+    let mut text_parts = Vec::new();
+
+    for value in rest {
+        if expect_parent {
+            parent = Some(value.parse::<usize>().map_err(|_| {
+                AppError::InvalidArgs("parent task number must be a positive integer".to_string())
+            })?);
+            expect_parent = false;
+            continue;
+        }
+
+        if expect_priority {
+            priority = Some(Priority::parse(value)?);
+            expect_priority = false;
+            continue;
+        }
+
+        if expect_label {
+            append_labels(&mut labels, value)?;
+            expect_label = false;
+            continue;
+        }
+
+        if matches!(value.as_str(), "--parent" | "-p") {
+            if parent.is_some() {
+                return Err(add_usage_error());
+            }
+            expect_parent = true;
+            continue;
+        }
+
+        if matches!(value.as_str(), "--priority" | "-P") {
+            if priority.is_some() {
+                return Err(add_usage_error());
+            }
+            expect_priority = true;
+            continue;
+        }
+
+        if matches!(value.as_str(), "--label" | "-l") {
+            expect_label = true;
+            continue;
+        }
+
+        text_parts.push(value.clone());
+    }
+
+    if expect_parent {
+        return Err(AppError::InvalidArgs(
+            "missing parent task number: use `--parent <number>`".to_string(),
+        ));
+    }
+    if expect_priority {
+        return Err(AppError::InvalidArgs(
+            "missing priority: use `--priority <high|medium|low>`".to_string(),
+        ));
+    }
+    if expect_label {
+        return Err(AppError::InvalidArgs(
+            "missing label: use `--label <label>`".to_string(),
+        ));
+    }
+
+    let text = text_parts.join(" ");
+    if text.trim().is_empty() {
+        return Err(AppError::EmptyTask);
+    }
+
+    Ok(Command::Add {
+        text,
+        parent,
+        priority,
+        labels,
+    })
+}
+
+fn add_usage_error() -> AppError {
+    AppError::InvalidArgs(
+        "usage: `to add \"task text\" [--parent <number>] [--priority <high|medium|low>] [--label <label>]`"
+            .to_string(),
+    )
+}
+
+fn list_usage_error() -> AppError {
+    AppError::InvalidArgs(
+        "usage: `to ls [query] [--priority <high|medium|low>] [--label <label>]`".to_string(),
+    )
+}
+
+fn append_labels(labels: &mut Vec<String>, value: &str) -> Result<()> {
+    for label in value.split(',') {
+        let label = clean_label(label)?;
+        if !labels.contains(&label) {
+            labels.push(label);
+        }
+    }
+
+    Ok(())
 }
 
 fn expect_no_extra_args(rest: &[String], command: Command) -> Result<Command> {
@@ -150,12 +323,25 @@ fn parse_indices_command(
     Ok(constructor(indices))
 }
 
+fn parse_tree_command(rest: &[String]) -> Result<Command> {
+    let [index] = rest else {
+        return Err(AppError::InvalidArgs(
+            "usage: `to tree <number>`".to_string(),
+        ));
+    };
+
+    Ok(Command::Tree(index.parse::<usize>().map_err(|_| {
+        AppError::InvalidArgs("task number must be a positive integer for `tree`".to_string())
+    })?))
+}
+
 fn parse_do_command(rest: &[String]) -> Result<Command> {
     if rest.is_empty() {
         return Err(do_usage_error());
     }
 
     let mut branch_name = None;
+    let mut create_branch = false;
     let mut expect_branch_name = false;
     let mut indices = Vec::new();
 
@@ -172,10 +358,18 @@ fn parse_do_command(rest: &[String]) -> Result<Command> {
         }
 
         if matches!(value.as_str(), "-b" | "--branch") {
-            if branch_name.is_some() {
+            if branch_name.is_some() || create_branch {
                 return Err(do_usage_error());
             }
             expect_branch_name = true;
+            continue;
+        }
+
+        if value == "--create-branch" {
+            if branch_name.is_some() || create_branch {
+                return Err(do_usage_error());
+            }
+            create_branch = true;
             continue;
         }
 
@@ -197,11 +391,14 @@ fn parse_do_command(rest: &[String]) -> Result<Command> {
     Ok(Command::Do {
         indices,
         branch_name,
+        create_branch,
     })
 }
 
 fn do_usage_error() -> AppError {
-    AppError::InvalidArgs("usage: `to do <number> [number ...] [-b <branch-name>]`".to_string())
+    AppError::InvalidArgs(
+        "usage: `to do <number> [number ...] [-b <branch-name>|--create-branch]`".to_string(),
+    )
 }
 
 #[cfg(test)]
@@ -221,7 +418,49 @@ mod tests {
     fn parses_add_command() {
         assert_eq!(
             parse_args(args(&["add", "write", "tests"])).unwrap(),
-            Command::Add("write tests".to_string())
+            Command::Add {
+                text: "write tests".to_string(),
+                parent: None,
+                priority: None,
+                labels: Vec::new()
+            }
+        );
+    }
+
+    #[test]
+    fn parses_add_subtask_command() {
+        assert_eq!(
+            parse_args(args(&["add", "write", "tests", "--parent", "2"])).unwrap(),
+            Command::Add {
+                text: "write tests".to_string(),
+                parent: Some(2),
+                priority: None,
+                labels: Vec::new()
+            }
+        );
+    }
+
+    #[test]
+    fn parses_add_metadata_command() {
+        assert_eq!(
+            parse_args(args(&[
+                "add",
+                "fix",
+                "api",
+                "--priority",
+                "high",
+                "--label",
+                "backend",
+                "--label",
+                "api"
+            ]))
+            .unwrap(),
+            Command::Add {
+                text: "fix api".to_string(),
+                parent: None,
+                priority: Some(Priority::High),
+                labels: vec!["backend".to_string(), "api".to_string()]
+            }
         );
     }
 
@@ -239,7 +478,8 @@ mod tests {
             parse_args(args(&["do", "3"])).unwrap(),
             Command::Do {
                 indices: vec![3],
-                branch_name: None
+                branch_name: None,
+                create_branch: false
             }
         );
     }
@@ -250,14 +490,16 @@ mod tests {
             parse_args(args(&["do", "-b", "feature/work", "3"])).unwrap(),
             Command::Do {
                 indices: vec![3],
-                branch_name: Some("feature/work".to_string())
+                branch_name: Some("feature/work".to_string()),
+                create_branch: false
             }
         );
         assert_eq!(
             parse_args(args(&["do", "3", "-b", "feature/work"])).unwrap(),
             Command::Do {
                 indices: vec![3],
-                branch_name: Some("feature/work".to_string())
+                branch_name: Some("feature/work".to_string()),
+                create_branch: false
             }
         );
     }
@@ -268,7 +510,8 @@ mod tests {
             parse_args(args(&["do", "3", "5"])).unwrap(),
             Command::Do {
                 indices: vec![3, 5],
-                branch_name: None
+                branch_name: None,
+                create_branch: false
             }
         );
     }
@@ -279,7 +522,20 @@ mod tests {
             parse_args(args(&["do", "3", "5", "-b", "batch-work"])).unwrap(),
             Command::Do {
                 indices: vec![3, 5],
-                branch_name: Some("batch-work".to_string())
+                branch_name: Some("batch-work".to_string()),
+                create_branch: false
+            }
+        );
+    }
+
+    #[test]
+    fn parses_do_command_with_auto_branch() {
+        assert_eq!(
+            parse_args(args(&["do", "3", "--create-branch"])).unwrap(),
+            Command::Do {
+                indices: vec![3],
+                branch_name: None,
+                create_branch: true
             }
         );
     }
@@ -297,7 +553,23 @@ mod tests {
     fn parses_list_query() {
         assert_eq!(
             parse_args(args(&["ls", "branch"])).unwrap(),
-            Command::List(Some("branch".to_string()))
+            Command::List(ListOptions {
+                query: Some("branch".to_string()),
+                priority: None,
+                labels: Vec::new()
+            })
+        );
+    }
+
+    #[test]
+    fn parses_list_metadata_filters() {
+        assert_eq!(
+            parse_args(args(&["ls", "--priority", "low", "--label", "frontend,ui"])).unwrap(),
+            Command::List(ListOptions {
+                query: None,
+                priority: Some(Priority::Low),
+                labels: vec!["frontend".to_string(), "ui".to_string()]
+            })
         );
     }
 
@@ -312,6 +584,11 @@ mod tests {
     #[test]
     fn parses_scan_command() {
         assert_eq!(parse_args(args(&["scan"])).unwrap(), Command::Scan);
+    }
+
+    #[test]
+    fn parses_tree_command() {
+        assert_eq!(parse_args(args(&["tree", "2"])).unwrap(), Command::Tree(2));
     }
 
     #[test]

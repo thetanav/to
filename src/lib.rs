@@ -10,9 +10,9 @@ use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use std::process::Command as ProcessCommand;
 
-use cli::Command;
+use cli::{Command, ListOptions};
 pub use error::{AppError, Result};
-use project::{find_todo_file, init_todo_file};
+use project::{ensure_agent_docs, find_todo_file, init_todo_file};
 use scan::scan_project;
 use todo::TodoList;
 
@@ -55,30 +55,48 @@ where
         }
         Command::Init => {
             let path = init_todo_file(cwd)?;
+            let agent_docs = ensure_agent_docs(cwd)?;
             writeln!(
                 writer,
                 "{} {}",
                 styled(use_color, "1;34", "Initialized"),
                 path.display()
             )?;
+            for path in agent_docs {
+                writeln!(
+                    writer,
+                    "{} {}",
+                    styled(use_color, "36", "Updated agent doc"),
+                    path.display()
+                )?;
+            }
         }
         other => {
             let todo_path = find_todo_file(cwd)?;
             let mut todos = TodoList::load(&todo_path)?;
 
             match other {
-                Command::List(query) => {
-                    write_task_list(writer, &todo_path, &todos, query.as_deref(), use_color)?
+                Command::List(options) => {
+                    write_task_list(writer, &todo_path, &todos, &options, use_color)?
                 }
-                Command::Add(text) => {
-                    let index = todos.add(text)?;
+                Command::Add {
+                    text,
+                    parent,
+                    priority,
+                    labels,
+                } => {
+                    let index = if let Some(parent) = parent {
+                        todos.add_child_with_metadata(parent, text, priority, labels)?
+                    } else {
+                        todos.add_with_metadata(text, priority, labels)?
+                    };
                     let task = &todos.tasks()[index - 1];
                     todos.save(&todo_path)?;
                     writeln!(
                         writer,
                         "{} task {index}: {}",
                         styled(use_color, "36", "Added"),
-                        task.text
+                        task.render_text()
                     )?;
                 }
                 Command::Done(indices) => {
@@ -86,7 +104,7 @@ where
                     let mut completed = Vec::new();
 
                     for index in indices {
-                        let task = todos.mark_done(index)?.text.clone();
+                        let task = todos.mark_done(index)?.render_text();
                         completed.push((index, task));
                     }
 
@@ -102,10 +120,16 @@ where
                 Command::Do {
                     indices,
                     branch_name,
+                    create_branch,
                 } => {
                     let indices = validate_task_indices(&todos, &indices)?;
                     let prompt = build_opencode_prompt(&indices);
                     let project_root = todo_path.parent().unwrap_or(cwd);
+                    let branch_name = if create_branch {
+                        Some(auto_task_branch_name(&todos, &indices)?)
+                    } else {
+                        branch_name
+                    };
 
                     if let Some(branch_name) = branch_name.as_deref() {
                         let branch_name = switch_branch(project_root, branch_name)?;
@@ -119,7 +143,7 @@ where
 
                     run_opencode(project_root, &prompt)?;
                     for index in indices {
-                        let task = todos.task(index)?.text.clone();
+                        let task = todos.task(index)?.render_text();
                         writeln!(
                             writer,
                             "{} task {index}: {task}",
@@ -132,7 +156,7 @@ where
                     let mut unchecked = Vec::new();
 
                     for index in indices {
-                        let task = todos.mark_undone(index)?.text.clone();
+                        let task = todos.mark_undone(index)?.render_text();
                         unchecked.push((index, task));
                     }
 
@@ -184,7 +208,7 @@ where
                     let mut removed = Vec::new();
                     for index in removal_order {
                         let task = todos.remove(index)?;
-                        removed.push((index, task.text));
+                        removed.push((index, task.render_text()));
                     }
 
                     todos.save(&todo_path)?;
@@ -206,13 +230,26 @@ where
                             writer,
                             "{} {index}. {}",
                             styled(use_color, "33", "Next task:"),
-                            task.text
+                            task.render_text()
                         )?;
                     } else {
                         writeln!(
                             writer,
                             "{}",
                             styled(use_color, "32", "All tasks are complete.")
+                        )?;
+                    }
+                }
+                Command::Tree(index) => {
+                    let tasks = todos.subtree(index)?;
+                    for (offset, task) in tasks.iter().enumerate() {
+                        writeln!(
+                            writer,
+                            "{}. {} {}{}",
+                            index + offset,
+                            task_marker(task.done, use_color),
+                            "  ".repeat(task.indent.saturating_sub(tasks[0].indent)),
+                            task.render_text()
                         )?;
                     }
                 }
@@ -234,6 +271,53 @@ fn build_opencode_prompt(indices: &[usize]) -> String {
     format!(
         "do all the tasks that are numbered {task_numbers} use `to` for seeing todo\n\n{OPENCODE_AGENT_PROMPT}"
     )
+}
+
+fn auto_task_branch_name(todos: &TodoList, indices: &[usize]) -> Result<String> {
+    let slug = if indices.len() == 1 {
+        let index = indices[0];
+        let task = todos.task(index)?;
+        let slug = slugify_task_text(&task.text);
+        if slug.is_empty() {
+            format!("task-{index}")
+        } else {
+            slug
+        }
+    } else {
+        let numbers = indices
+            .iter()
+            .map(|index| index.to_string())
+            .collect::<Vec<_>>()
+            .join("-");
+        format!("tasks-{numbers}")
+    };
+
+    Ok(format!("feature/{slug}"))
+}
+
+fn slugify_task_text(text: &str) -> String {
+    let mut slug = String::new();
+    let mut last_was_dash = false;
+
+    for character in text.chars() {
+        if character.is_ascii_alphanumeric() {
+            slug.push(character.to_ascii_lowercase());
+            last_was_dash = false;
+        } else if !last_was_dash && !slug.is_empty() {
+            slug.push('-');
+            last_was_dash = true;
+        }
+
+        if slug.len() >= 48 {
+            break;
+        }
+    }
+
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+
+    slug
 }
 
 fn launch_opencode(project_root: &Path, prompt: &str) -> Result<()> {
@@ -326,7 +410,7 @@ fn write_task_list<W: Write>(
     writer: &mut W,
     todo_path: &Path,
     todos: &TodoList,
-    query: Option<&str>,
+    options: &ListOptions,
     use_color: bool,
 ) -> Result<()> {
     writeln!(
@@ -344,11 +428,32 @@ fn write_task_list<W: Write>(
         return Ok(());
     }
 
-    if let Some(query) = query {
+    if let Some(query) = &options.query {
         writeln!(writer, "{} \"{query}\"", styled(use_color, "36", "Filter:"))?;
     }
+    if let Some(priority) = options.priority {
+        writeln!(
+            writer,
+            "{} {}",
+            styled(use_color, "36", "Priority:"),
+            priority.as_str()
+        )?;
+    }
+    if !options.labels.is_empty() {
+        writeln!(
+            writer,
+            "{} {}",
+            styled(use_color, "36", "Labels:"),
+            options
+                .labels
+                .iter()
+                .map(|label| format!("#{label}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )?;
+    }
 
-    let query = query.map(|value| value.to_lowercase());
+    let query = options.query.as_ref().map(|value| value.to_lowercase());
     let mut matches = 0usize;
     let mut open = 0usize;
     let mut done = 0usize;
@@ -358,8 +463,16 @@ fn write_task_list<W: Write>(
             .as_ref()
             .map(|value| task.text.to_lowercase().contains(value))
             .unwrap_or(true);
+        let matches_priority = options
+            .priority
+            .map(|priority| task.priority == Some(priority))
+            .unwrap_or(true);
+        let matches_labels = options
+            .labels
+            .iter()
+            .all(|label| task.labels.contains(label));
 
-        if !matches_query {
+        if !(matches_query && matches_priority && matches_labels) {
             continue;
         }
 
@@ -372,16 +485,17 @@ fn write_task_list<W: Write>(
 
         writeln!(
             writer,
-            "{}. {} {}",
+            "{}. {} {}{}",
             index + 1,
             task_marker(task.done, use_color),
-            task.text
+            "  ".repeat(task.indent),
+            task.render_text()
         )?;
     }
 
-    if let Some(query) = query {
+    if options.query.is_some() || options.priority.is_some() || !options.labels.is_empty() {
         if matches == 0 {
-            writeln!(writer, "No tasks matching \"{query}\".")?;
+            writeln!(writer, "No matching tasks.")?;
         }
         writeln!(
             writer,
@@ -444,6 +558,7 @@ fn styled(use_color: bool, code: &str, text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::todo::Priority;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -495,7 +610,13 @@ mod tests {
         let rendered = String::from_utf8(output).unwrap();
         assert!(rendered.contains("to ls [query]"));
         assert!(rendered.contains("to init"));
+        assert!(rendered.contains("to add \"task text\" --parent <number>"));
+        assert!(
+            rendered.contains("to add \"task text\" --priority <high|medium|low> --label <label>")
+        );
         assert!(rendered.contains("to do <number> [number ...] [-b <branch-name>]"));
+        assert!(rendered.contains("to do <number> [number ...] --create-branch"));
+        assert!(rendered.contains("to tree <number>"));
     }
 
     #[test]
@@ -524,6 +645,7 @@ mod tests {
             Command::Do {
                 indices: vec![1, 2],
                 branch_name: None,
+                create_branch: false,
             },
             &nested,
             &mut output,
@@ -556,7 +678,11 @@ mod tests {
 
         let mut output = Vec::new();
         execute(
-            Command::List(Some("branch".to_string())),
+            Command::List(ListOptions {
+                query: Some("branch".to_string()),
+                priority: None,
+                labels: Vec::new(),
+            }),
             &temp.path,
             &mut output,
             false,
@@ -571,6 +697,38 @@ mod tests {
         assert!(rendered.contains("3. [ ] branch follow-up"));
         assert!(!rendered.contains("docs cleanup"));
         assert!(rendered.contains("Matches: 2  Open: 2  Done: 0"));
+    }
+
+    #[test]
+    fn list_command_filters_tasks_by_metadata() {
+        let temp = TempDir::new("list-metadata");
+        fs::write(
+            temp.path.join(".todo"),
+            "[ ] api fix @high #backend #api\n[x] ui polish @low #frontend\n",
+        )
+        .unwrap();
+
+        let mut output = Vec::new();
+        execute(
+            Command::List(ListOptions {
+                query: None,
+                priority: Some(Priority::High),
+                labels: vec!["backend".to_string()],
+            }),
+            &temp.path,
+            &mut output,
+            false,
+            |_root, _prompt| Ok(()),
+            |_root, branch_name| Ok(branch_name.to_string()),
+        )
+        .unwrap();
+
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(rendered.contains("Priority: high"));
+        assert!(rendered.contains("Labels: #backend"));
+        assert!(rendered.contains("1. [ ] api fix @high #backend #api"));
+        assert!(!rendered.contains("ui polish"));
+        assert!(rendered.contains("Matches: 1  Open: 1  Done: 0"));
     }
 
     #[test]
@@ -647,6 +805,7 @@ mod tests {
             Command::Do {
                 indices: vec![1, 2],
                 branch_name: Some("feature/batch-work".to_string()),
+                create_branch: false,
             },
             &project,
             &mut output,
@@ -673,5 +832,125 @@ mod tests {
         assert!(rendered.contains("Switched to branch feature/batch-work"));
         assert!(rendered.contains("Spawned agent for task 1: branch task"));
         assert!(rendered.contains("Spawned agent for task 2: second task"));
+    }
+
+    #[test]
+    fn add_command_can_create_subtask() {
+        let temp = TempDir::new("add-subtask");
+        fs::write(temp.path.join(".todo"), "[ ] parent\n[ ] sibling\n").unwrap();
+
+        let mut output = Vec::new();
+        execute(
+            Command::Add {
+                text: "child task".to_string(),
+                parent: Some(1),
+                priority: None,
+                labels: Vec::new(),
+            },
+            &temp.path,
+            &mut output,
+            false,
+            |_root, _prompt| Ok(()),
+            |_root, branch_name| Ok(branch_name.to_string()),
+        )
+        .unwrap();
+
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(rendered.contains("Added task 2: child task"));
+
+        let saved = fs::read_to_string(temp.path.join(".todo")).unwrap();
+        assert_eq!(saved, "[ ] parent\n  [ ] child task\n[ ] sibling\n");
+    }
+
+    #[test]
+    fn add_command_can_create_task_with_metadata() {
+        let temp = TempDir::new("add-metadata");
+        fs::write(temp.path.join(".todo"), "").unwrap();
+
+        let mut output = Vec::new();
+        execute(
+            Command::Add {
+                text: "api fix".to_string(),
+                parent: None,
+                priority: Some(Priority::High),
+                labels: vec!["backend".to_string(), "api".to_string()],
+            },
+            &temp.path,
+            &mut output,
+            false,
+            |_root, _prompt| Ok(()),
+            |_root, branch_name| Ok(branch_name.to_string()),
+        )
+        .unwrap();
+
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(rendered.contains("Added task 1: api fix @high #backend #api"));
+
+        let saved = fs::read_to_string(temp.path.join(".todo")).unwrap();
+        assert_eq!(saved, "[ ] api fix @high #backend #api\n");
+    }
+
+    #[test]
+    fn tree_command_shows_task_subtree() {
+        let temp = TempDir::new("tree");
+        fs::write(
+            temp.path.join(".todo"),
+            "[ ] parent\n  [ ] child\n[ ] sibling\n",
+        )
+        .unwrap();
+
+        let mut output = Vec::new();
+        execute(
+            Command::Tree(1),
+            &temp.path,
+            &mut output,
+            false,
+            |_root, _prompt| Ok(()),
+            |_root, branch_name| Ok(branch_name.to_string()),
+        )
+        .unwrap();
+
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(rendered.contains("1. [ ] parent"));
+        assert!(rendered.contains("2. [ ]   child"));
+        assert!(!rendered.contains("sibling"));
+    }
+
+    #[test]
+    fn do_command_can_create_branch_from_task_text() {
+        let temp = TempDir::new("do-auto-branch");
+        fs::write(
+            temp.path.join(".todo"),
+            "[ ] Add Claude/AGENTS context export!\n",
+        )
+        .unwrap();
+
+        let mut output = Vec::new();
+        let mut observed_branch = None;
+
+        execute(
+            Command::Do {
+                indices: vec![1],
+                branch_name: None,
+                create_branch: true,
+            },
+            &temp.path,
+            &mut output,
+            false,
+            |_root, _prompt| Ok(()),
+            |_root, branch_name| {
+                observed_branch = Some(branch_name.to_string());
+                Ok(branch_name.to_string())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            observed_branch.as_deref(),
+            Some("feature/add-claude-agents-context-export")
+        );
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(rendered.contains("Switched to branch feature/add-claude-agents-context-export"));
+        assert!(rendered.contains("Spawned agent for task 1: Add Claude/AGENTS context export!"));
     }
 }
