@@ -7,7 +7,7 @@ Release 0.1.5.
 ## Install
 
 ```bash
-cargo install thetanav-to
+cargo install tto
 ```
 
 That installs the executable as `to`, so you run it like:
