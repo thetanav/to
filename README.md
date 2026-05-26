@@ -1,5 +1,7 @@
 # `to`
 
+Release 0.1.5.
+
 `to` is a small Rust CLI for project-scoped TODO lists. It walks up from your current working directory, finds the nearest `.todo` file, and operates on that task list automatically. `to init` also prepares `CLAUDE.md` and `AGENTS.md` so AI coding agents know to use the project TODO list.
 
 ## Install
