@@ -1,4 +1,6 @@
 import { createOpencodeClient, type Project as OpenCodeProject, type Session as OpenCodeSession, type SessionStatus as OpenCodeSessionStatus } from "@opencode-ai/sdk/v2";
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -182,32 +184,83 @@ export async function openTaskInOpencode(directory: string, task: TodoTask): Pro
   const repoRoot = await resolveRepoRoot(directory);
   const baseUrl = process.env.OPENCODE_BASE_URL ?? "http://127.0.0.1:4096";
   const client = createOpencodeClient({ baseUrl, responseStyle: "data", throwOnError: true, directory: repoRoot });
+  const knownSessionIDs = new Set((await safeCall(() => client.session.list({ limit: 100 })))?.data?.map((session) => session.id) ?? []);
 
-  const sessionResult = await client.session.create({
-    title: `Task ${task.id}: ${task.text}`,
-  });
-  const session = sessionResult.data;
-  if (!session) {
-    throw new Error("OpenCode did not return a session");
-  }
+  await launchTodoCommand(repoRoot, [task.id]);
 
-  await client.session.prompt({
-    sessionID: session.id,
-    parts: [
-      {
-        type: "text",
-        text: [
-          `Work on task ${task.id}: ${task.text}`,
-          "",
-          "Use the repository TODO list as the source of truth.",
-          "Inspect the codebase before making changes and report what changed when done.",
-        ].join("\n"),
-      },
-    ],
-  });
-
+  const session = await waitForSpawnedSession(client, repoRoot, task, knownSessionIDs);
   return { sessionID: session.id };
 }
+
+async function launchTodoCommand(repoRoot: string, indices: number[]): Promise<void> {
+  const workspaceRoot = resolveWorkspaceRoot();
+  const command = resolveTodoCommand(workspaceRoot);
+  const args = command === "cargo" ? ["run", "--quiet", "--manifest-path", path.join(workspaceRoot, "Cargo.toml"), "--", "do", ...indices.map(String)] : ["do", ...indices.map(String)];
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: repoRoot,
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve();
+    });
+  });
+}
+
+async function waitForSpawnedSession(
+  client: ReturnType<typeof createOpencodeClient>,
+  repoRoot: string,
+  task: TodoTask,
+  knownSessionIDs: Set<string>,
+): Promise<OpenCodeSession> {
+  const deadline = Date.now() + 15000;
+  const title = `Task ${task.id}: ${task.text}`;
+
+  while (Date.now() < deadline) {
+    const result = await safeCall(() => client.session.list({ limit: 100 }));
+    const sessions = Array.isArray(result?.data) ? result.data : [];
+    const match = sessions
+      .filter((session) => !knownSessionIDs.has(session.id) && session.directory === repoRoot && session.title === title)
+      .sort((left, right) => right.time.created - left.time.created)[0];
+
+    if (match) {
+      return match;
+    }
+
+    await delay(500);
+  }
+
+  throw new Error("OpenCode session did not appear after launching `to do`");
+}
+
+function resolveWorkspaceRoot(): string {
+  const cwd = process.cwd();
+  const directCargo = path.join(cwd, "Cargo.toml");
+  if (existsSync(directCargo)) {
+    return cwd;
+  }
+
+  const parent = path.resolve(cwd, "..");
+  const parentCargo = path.join(parent, "Cargo.toml");
+  if (existsSync(parentCargo)) {
+    return parent;
+  }
+
+  return cwd;
+}
+
+function resolveTodoCommand(workspaceRoot: string): string {
+  const binaryName = process.platform === "win32" ? "to.exe" : "to";
+  const binaryPath = process.env.TO_BIN ?? path.join(workspaceRoot, "target", "debug", binaryName);
+  return existsSync(binaryPath) ? binaryPath : "cargo";
+}
+
 
 export async function resolveRepoRoot(inputDirectory: string): Promise<string> {
   let current = path.resolve(inputDirectory);
@@ -325,6 +378,10 @@ async function safeCall<T>(fn: () => Promise<T>): Promise<T | null> {
   } catch {
     return null;
   }
+}
+
+async function delay(milliseconds: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function pathExists(filePath: string): Promise<boolean> {

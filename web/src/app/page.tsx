@@ -1,17 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { DashboardSnapshot, TodoTask } from "@/lib/dashboard";
 
 const defaultDirectory = "C:/Users/Tanav Poswal/Dev/to";
-
-function Icon({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return (
-    <span className={`inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-muted/40 text-muted-foreground ${className}`}>
-      {children}
-    </span>
-  );
-}
 
 function FolderIcon() {
   return (
@@ -30,14 +22,6 @@ function RefreshIcon() {
   );
 }
 
-function PlayIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4" aria-hidden="true">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 5.25v13.5L19.5 12 8.25 5.25Z" />
-    </svg>
-  );
-}
-
 function CheckIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4" aria-hidden="true">
@@ -47,24 +31,33 @@ function CheckIcon() {
   );
 }
 
-function ServerIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4" aria-hidden="true">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 6.75h13.5M5.25 12h13.5M5.25 17.25h13.5" />
-      <circle cx="8" cy="6.75" r="1" fill="currentColor" />
-      <circle cx="8" cy="12" r="1" fill="currentColor" />
-      <circle cx="8" cy="17.25" r="1" fill="currentColor" />
-    </svg>
-  );
+function taskSessionStorageKey(repoRoot: string) {
+  return `to.dashboard.task-sessions:${repoRoot}`;
 }
 
-function SparklesIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4" aria-hidden="true">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M18 14l.9 2.4L21 17l-2.1.6L18 20l-.9-2.4L15 17l2.1-.6L18 14Z" />
-    </svg>
-  );
+function readTaskSessions(repoRoot: string): Record<number, string> {
+  if (typeof window === "undefined") {
+    return {};
+  }
+
+  try {
+    const raw = window.localStorage.getItem(taskSessionStorageKey(repoRoot));
+    if (!raw) {
+      return {};
+    }
+
+    return JSON.parse(raw) as Record<number, string>;
+  } catch {
+    return {};
+  }
+}
+
+function writeTaskSessions(repoRoot: string, sessions: Record<number, string>) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(taskSessionStorageKey(repoRoot), JSON.stringify(sessions));
 }
 
 export default function Home() {
@@ -74,6 +67,9 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
+  const [taskSessions, setTaskSessions] = useState<Record<number, string>>({});
+  const [spawningTaskId, setSpawningTaskId] = useState<number | null>(null);
+  const [spawnError, setSpawnError] = useState<string | null>(null);
 
   useEffect(() => {
     loadSnapshot(directory);
@@ -100,6 +96,7 @@ export default function Home() {
       const data = (await response.json()) as DashboardSnapshot;
       setSnapshot(data);
       setSelectedTaskId((current) => current ?? data.todo.tasks[0]?.id ?? null);
+      setTaskSessions(readTaskSessions(data.repoRoot));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setSnapshot(null);
@@ -109,17 +106,42 @@ export default function Home() {
   }
 
   async function openTask(task: TodoTask) {
-    const response = await fetch("/api/dashboard/open", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ directory, taskId: task.id }),
-    });
+    setSpawningTaskId(task.id);
+    setSpawnError(null);
 
-    if (!response.ok) {
-      throw new Error("failed to open task in OpenCode");
+    try {
+      const response = await fetch("/api/dashboard/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ directory, taskId: task.id }),
+      });
+
+      if (!response.ok) {
+        throw new Error("failed to open task in OpenCode");
+      }
+
+      const result = (await response.json()) as { sessionID?: string };
+      if (result.sessionID) {
+        const sessionID = result.sessionID;
+        setTaskSessions((current) => {
+          const next: Record<number, string> = { ...current, [task.id]: sessionID };
+          writeTaskSessions(snapshot?.repoRoot ?? directory, next);
+          return next;
+        });
+      }
+
+      await loadSnapshot(directory);
+    } finally {
+      setSpawningTaskId(null);
     }
+  }
 
-    await loadSnapshot(directory);
+  async function launchTask(task: TodoTask) {
+    try {
+      await openTask(task);
+    } catch (err) {
+      setSpawnError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   async function toggleTask(task: TodoTask, done: boolean) {
@@ -143,14 +165,8 @@ export default function Home() {
     <main className="min-h-screen bg-background px-4 py-4 text-foreground md:px-6 md:py-6">
       <div className="mx-auto grid min-h-[calc(100vh-2rem)] max-w-[1600px] gap-4 lg:grid-cols-[300px_minmax(0,1fr)_360px]">
         <aside className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-          <div className="flex items-center gap-3 border-b border-border pb-5">
-            <Icon>
-              <SparklesIcon />
-            </Icon>
-            <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Control Room</p>
-              <h1 className="text-base font-medium">OpenCode Dashboard</h1>
-            </div>
+          <div className="border-b border-border pb-5">
+            <h1 className="text-base font-medium">OpenCode Dashboard</h1>
           </div>
 
           <form
@@ -178,37 +194,10 @@ export default function Home() {
             </button>
           </form>
 
-          <div className="mt-5 space-y-3">
-            {[
-              ["Open", todo?.open ?? 0],
-              ["Done", todo?.done ?? 0],
-              ["Sessions", opencode?.sessions.length ?? 0],
-              ["Projects", opencode?.projects.length ?? 0],
-            ].map(([label, value]) => (
-              <div key={label} className="flex items-center justify-between rounded-md border border-border bg-muted/30 px-4 py-3">
-                <span className="text-sm text-muted-foreground">{label}</span>
-                <span className="text-sm font-medium text-foreground">{value}</span>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-5 rounded-md border border-border bg-muted/30 p-4 text-sm">
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <ServerIcon />
-              <p className="text-xs uppercase tracking-[0.24em]">OpenCode</p>
-            </div>
-            <p className="mt-3 text-sm text-foreground">{opencode?.connected ? `Connected to ${opencode.baseUrl}` : "OpenCode offline or unavailable"}</p>
-            <p className="mt-2 text-xs text-muted-foreground">{opencode?.connected ? "Server reachable" : "Waiting for server"}</p>
-          </div>
         </aside>
 
         <section className="rounded-2xl border border-border bg-card p-5 shadow-sm">
           <div className="flex flex-col gap-5 border-b border-border pb-5 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Developer todo cockpit</p>
-              <h2 className="mt-2 text-3xl font-semibold tracking-tight md:text-4xl">Tasks, sessions, and OpenCode in one view.</h2>
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">Load a repo, inspect its `.todo`, review live OpenCode sessions, and launch work directly from the dashboard.</p>
-            </div>
             <button className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-background px-4 text-sm font-medium text-foreground transition-colors hover:bg-muted/60" type="button" onClick={() => loadSnapshot(directory)}>
               <RefreshIcon />
               Refresh
@@ -225,16 +214,24 @@ export default function Home() {
               {loading ? <p className="mt-4 text-sm text-muted-foreground">Loading repository...</p> : null}
               {error ? <p className="mt-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}
               {todo?.error ? <p className="mt-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">{todo.error}</p> : null}
+              {spawnError ? <p className="mt-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{spawnError}</p> : null}
 
               <div className="mt-4 space-y-3">
                 {todo?.tasks.length ? (
                   todo.tasks.map((task) => {
                     const selected = selectedTask?.id === task.id;
                     return (
-                      <button
+                      <div
                         key={task.id}
-                        type="button"
+                        role="button"
+                        tabIndex={0}
                         onClick={() => setSelectedTaskId(task.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            setSelectedTaskId(task.id);
+                          }
+                        }}
                         className={`w-full rounded-md border px-4 py-4 text-left transition-colors ${selected ? "border-foreground/30 bg-muted/60" : "border-border bg-background hover:bg-muted/40"}`}
                       >
                         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -256,68 +253,42 @@ export default function Home() {
                             <span key={label} className="rounded-full border border-border bg-muted/40 px-2 py-1 text-muted-foreground">#{label}</span>
                           ))}
                         </div>
-                      </button>
+
+                        <div className="mt-4 flex flex-wrap items-center gap-2">
+                          <button
+                            className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted/60"
+                            type="button"
+                            onClick={async (event) => {
+                              event.stopPropagation();
+                              await launchTask(task);
+                            }}
+                            disabled={spawningTaskId === task.id}
+                          >
+                            {spawningTaskId === task.id ? "Running..." : "Do"}
+                          </button>
+                        </div>
+                      </div>
                     );
                   })
-                ) : (
-                  <div className="rounded-md border border-dashed border-border bg-muted/20 p-8 text-sm text-muted-foreground">
-                    No `.todo` file found yet. Load a repo with `to init` run in it or create one in the project root.
-                  </div>
-                )}
+                  ) : (
+                    <div className="rounded-md border border-dashed border-border bg-muted/20 p-8 text-sm text-muted-foreground">
+                      No `.todo` file found yet. Load a repo with `to init` run in it or create one in the project root.
+                    </div>
+                  )}
               </div>
             </div>
 
-            <div className="space-y-4">
-              <div className="rounded-md border border-border bg-background p-4">
-                <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Selected task</p>
-                {selectedTask ? (
-                  <>
-                    <h3 className="mt-2 text-2xl font-semibold tracking-tight">{selectedTask.text}</h3>
-                    <div className="mt-4 space-y-3 text-sm text-muted-foreground">
-                      <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 px-3 py-2">
-                        <span>Repository</span>
-                        <span className="text-foreground">{snapshot?.repoRoot}</span>
-                      </div>
-                      <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 px-3 py-2">
-                        <span>State</span>
-                        <span className="text-foreground">{selectedTask.done ? "done" : "open"}</span>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 grid grid-cols-2 gap-3">
-                      <button className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-foreground px-4 text-sm font-medium text-background transition-colors hover:bg-foreground/90" type="button" onClick={() => openTask(selectedTask)}>
-                        <PlayIcon />
-                        Open in OpenCode
-                      </button>
-                      <button className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-background px-4 text-sm font-medium text-foreground transition-colors hover:bg-muted/60" type="button" onClick={() => toggleTask(selectedTask, !selectedTask.done)}>
-                        <CheckIcon />
-                        Mark {selectedTask.done ? "open" : "done"}
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <p className="mt-3 text-sm text-muted-foreground">Select a task to inspect it.</p>
-                )}
-              </div>
-
-              <div className="rounded-md border border-border bg-background p-4">
-                <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">OpenCode sessions</p>
-                <div className="mt-3 space-y-3">
-                  {opencode?.sessions.length ? (
-                    opencode.sessions.map((session) => (
-                      <div key={session.id} className="rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="font-medium text-foreground">{session.title}</span>
-                          <span className="text-xs text-muted-foreground">{session.id}</span>
-                        </div>
-                        <p className="mt-2 text-xs text-muted-foreground">{session.directory}</p>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-sm text-muted-foreground">No sessions yet.</p>
-                  )}
-                </div>
-              </div>
+            <div className="rounded-md border border-border bg-background p-4">
+              <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Selected task</p>
+              {selectedTask ? (
+                <>
+                  <h3 className="mt-2 text-2xl font-semibold tracking-tight">{selectedTask.text}</h3>
+                  <button className="mt-4 inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-background px-4 text-sm font-medium text-foreground transition-colors hover:bg-muted/60" type="button" onClick={() => toggleTask(selectedTask, !selectedTask.done)}>
+                    <CheckIcon />
+                    Mark {selectedTask.done ? "open" : "done"}
+                  </button>
+                </>
+              ) : null}
             </div>
           </div>
         </section>
