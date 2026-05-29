@@ -1,342 +1,358 @@
-export default function Home() {
+"use client";
+
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import type { DashboardSnapshot, TodoTask } from "@/lib/dashboard";
+
+const defaultDirectory = "C:/Users/Tanav Poswal/Dev/to";
+
+function Icon({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
-    <div className="relative min-h-screen overflow-hidden bg-background text-foreground">
-      <div className="pointer-events-none absolute inset-0 hero-ring" />
-      <div className="pointer-events-none absolute inset-0 grid-fade" />
-      <div className="pointer-events-none absolute inset-0 opacity-40 noise" />
+    <span className={`inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-muted/40 text-muted-foreground ${className}`}>
+      {children}
+    </span>
+  );
+}
 
-      <header className="relative z-10 flex items-center justify-between px-6 pt-6 md:px-12">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[#2a2a2a] bg-[#0b0b0b] text-sm font-semibold">
-            to
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-muted">project TODOs</p>
-            <p className="font-display text-lg">to</p>
-          </div>
-        </div>
-        <nav className="hidden items-center gap-8 text-sm text-muted md:flex">
-          <a className="transition hover:text-foreground" href="#features">
-            Features
-          </a>
-          <a className="transition hover:text-foreground" href="#workflow">
-            Workflow
-          </a>
-          <a className="transition hover:text-foreground" href="#workflow-proof">
-            Proof
-          </a>
-        </nav>
-        <div className="flex items-center gap-3 text-sm">
-          <a className="btn-secondary rounded-full px-4 py-2" href="https://github.com/thetanav/to" target="_blank" rel="noreferrer">
-            GitHub
-          </a>
-          <a className="btn-primary rounded-full px-4 py-2 font-semibold" href="#cta">
-            Install tto
-          </a>
-        </div>
-      </header>
+function FolderIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 7.5A2.25 2.25 0 0 1 6 5.25h4.19c.6 0 1.17.24 1.59.66l1.06 1.09c.42.42 1 .66 1.59.66H18a2.25 2.25 0 0 1 2.25 2.25v7.5A2.25 2.25 0 0 1 18 19.5H6A2.25 2.25 0 0 1 3.75 17.25v-9.75Z" />
+    </svg>
+  );
+}
 
-      <main className="relative z-10">
-        <section className="px-6 pb-20 pt-16 md:px-12 md:pt-24">
-          <div className="mx-auto grid max-w-6xl gap-12 lg:grid-cols-[1.1fr_0.9fr]">
-            <div className="space-y-8">
-              <div className="inline-flex items-center gap-3 rounded-full border border-[#2a2a2a] bg-[#0b0b0b] px-4 py-2 text-xs text-muted">
-                <span className="badge rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.2em]">
-                  Built for velocity
-                </span>
-                Project-scoped TODOs for shipping teams
-              </div>
-              <div className="space-y-6">
-                <h1 className="fade-up font-display text-4xl leading-[1.05] tracking-tight md:text-6xl">
-                  A focused TODO system that lives inside every repo.
-                </h1>
-                <p className="fade-up-delay max-w-2xl text-lg text-muted md:text-xl">
-                  to is a fast, local-first CLI that keeps TODOs scoped to the project, surfaces the next task instantly, and makes AI handoffs reliable.
-                </p>
-                <p className="text-xs uppercase tracking-[0.3em] text-muted">CLI command: tto</p>
-              </div>
-              <div className="fade-up-delay-2 flex flex-wrap items-center gap-4 text-sm">
-                <a className="btn-primary rounded-full px-6 py-3 font-semibold" href="#cta">
-                  Install tto
-                </a>
-                <a className="btn-secondary rounded-full px-6 py-3" href="#features">
-                  See the workflow
-                </a>
-                <div className="flex items-center gap-2 text-xs text-muted">
-                  <span className="h-2 w-2 rounded-full bg-[#e5e5e5]" />
-                  Setup in minutes
-                </div>
-              </div>
-              <div className="fade-up-delay-3 flex flex-wrap gap-6 text-xs uppercase tracking-[0.22em] text-muted">
-                <span>Local-first</span>
-                <span>Agent-ready</span>
-                <span>Repo-scoped</span>
-                <span>Team-safe</span>
-              </div>
-            </div>
+function RefreshIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 8.25H21v-4.5" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 9a8.25 8.25 0 1 0 1.58 4.83" />
+    </svg>
+  );
+}
 
-            <div className="card glow relative overflow-hidden rounded-3xl p-6">
-              <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-[rgba(255,255,255,0.12)] blur-3xl" />
-              <div className="absolute bottom-6 right-6 h-24 w-24 rounded-full bg-[rgba(255,255,255,0.08)] blur-2xl" />
-              <div className="relative space-y-6">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs uppercase tracking-[0.3em] text-muted">Live snapshot</p>
-                  <span className="badge rounded-full px-3 py-1 text-[11px]">CLI session</span>
-                </div>
-                <div className="rounded-2xl border border-[#1f1f1f] bg-[#0a0a0a] p-4 text-sm text-[#f5f5f5]">
-                  <pre className="whitespace-pre-wrap font-mono text-[12px] leading-5 text-[#d4d4d4]">
-{`$ tto init
-Initialized /projects/api/.todo
-Updated agent doc /projects/api/CLAUDE.md
+function PlayIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 5.25v13.5L19.5 12 8.25 5.25Z" />
+    </svg>
+  );
+}
 
-$ tto add "critical API fix" --priority high --label backend
-Added task 4: critical API fix @high #backend
+function CheckIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="m9 12 2.25 2.25L15.75 9.75" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+    </svg>
+  );
+}
 
-$ tto next
-Next task: 4. critical API fix
+function ServerIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 6.75h13.5M5.25 12h13.5M5.25 17.25h13.5" />
+      <circle cx="8" cy="6.75" r="1" fill="currentColor" />
+      <circle cx="8" cy="12" r="1" fill="currentColor" />
+      <circle cx="8" cy="17.25" r="1" fill="currentColor" />
+    </svg>
+  );
+}
 
-$ tto do 4 --create-branch
-# opens opencode on feature/critical-api-fix`}
-                  </pre>
-                </div>
-                <div className="grid gap-3 text-xs text-muted">
-                  <div className="flex items-center justify-between">
-                    <span>Local file</span>
-                    <span className="text-foreground">.todo</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Branch created</span>
-                    <span className="text-foreground">feature/critical-api-fix</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Open tasks</span>
-                    <span className="text-foreground">4</span>
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-[#1f1f1f] bg-[#0f0f0f] p-4">
-                  <div className="flex items-center justify-between text-xs text-muted">
-                    <span>Agent handoff</span>
-                    <span className="text-foreground">Opencode ready</span>
-                  </div>
-                  <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-[#141414]">
-                    <div className="h-full w-4/5 rounded-full bg-gradient-to-r from-[#f5f5f5] via-[#d4d4d4] to-[#a3a3a3]" />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+function SparklesIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M18 14l.9 2.4L21 17l-2.1.6L18 20l-.9-2.4L15 17l2.1-.6L18 14Z" />
+    </svg>
+  );
+}
 
-        <section className="px-6 pb-16 md:px-12" id="features">
-          <div className="mx-auto max-w-6xl">
-            <div className="flex flex-wrap items-center justify-between gap-6">
-              <div className="space-y-3">
-                <p className="text-xs uppercase tracking-[0.4em] text-muted">Why teams ship faster</p>
-                <h2 className="font-display text-3xl md:text-4xl">All tasks stay close to the code.</h2>
-              </div>
-                <p className="max-w-lg text-sm text-muted">
-                  Keep work aligned with the repo you are in. No more stray TODOs across docs, tickets, and chat. to is the single source of truth in every project.
-                </p>
-            </div>
+export default function Home() {
+  const [directory, setDirectory] = useState(defaultDirectory);
+  const [inputDirectory, setInputDirectory] = useState(defaultDirectory);
+  const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
 
-            <div className="mt-10 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-              {[
-                {
-                  title: "Project-scoped discovery",
-                  copy: "Walks up to the nearest .todo automatically so every command lands in the right repo.",
-                },
-                {
-                  title: "Priority and labels",
-                  copy: "Tag tasks with @high, @medium, and #labels for instant filtering and focus.",
-                },
-                {
-                  title: "Agent-ready handoff",
-                  copy: "tto do opens opencode with an embedded prompt and your selected tasks.",
-                },
-                {
-                  title: "Scan codebase",
-                  copy: "Imports TODO comments from git-tracked files so nothing ships unfinished.",
-                },
-                {
-                  title: "Branch automation",
-                  copy: "Create or switch to task branches automatically with --create-branch or -b.",
-                },
-                {
-                  title: "Tree views",
-                  copy: "Nested subtasks render cleanly to keep large epics visible.",
-                },
-              ].map((item) => (
-                <div key={item.title} className="card rounded-2xl p-6">
-                  <h3 className="font-display text-lg">{item.title}</h3>
-                  <p className="mt-3 text-sm text-muted">{item.copy}</p>
-                  <div className="mt-6 h-1 w-16 rounded-full bg-gradient-to-r from-[#f5f5f5] to-[#a3a3a3]" />
-                </div>
-              ))}
+  useEffect(() => {
+    loadSnapshot(directory);
+  }, [directory]);
+
+  const selectedTask = useMemo(() => {
+    if (!snapshot?.todo.tasks.length) {
+      return null;
+    }
+
+    return snapshot.todo.tasks.find((task) => task.id === selectedTaskId) ?? snapshot.todo.tasks[0];
+  }, [selectedTaskId, snapshot]);
+
+  async function loadSnapshot(targetDirectory: string) {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/dashboard?directory=${encodeURIComponent(targetDirectory)}`);
+      if (!response.ok) {
+        throw new Error(`failed to load dashboard (${response.status})`);
+      }
+
+      const data = (await response.json()) as DashboardSnapshot;
+      setSnapshot(data);
+      setSelectedTaskId((current) => current ?? data.todo.tasks[0]?.id ?? null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setSnapshot(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function openTask(task: TodoTask) {
+    const response = await fetch("/api/dashboard/open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ directory, taskId: task.id }),
+    });
+
+    if (!response.ok) {
+      throw new Error("failed to open task in OpenCode");
+    }
+
+    await loadSnapshot(directory);
+  }
+
+  async function toggleTask(task: TodoTask, done: boolean) {
+    const response = await fetch("/api/dashboard/toggle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ directory, taskId: task.id, done }),
+    });
+
+    if (!response.ok) {
+      throw new Error("failed to update todo state");
+    }
+
+    await loadSnapshot(directory);
+  }
+
+  const todo = snapshot?.todo;
+  const opencode = snapshot?.opencode;
+
+  return (
+    <main className="min-h-screen bg-background px-4 py-4 text-foreground md:px-6 md:py-6">
+      <div className="mx-auto grid min-h-[calc(100vh-2rem)] max-w-[1600px] gap-4 lg:grid-cols-[300px_minmax(0,1fr)_360px]">
+        <aside className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <div className="flex items-center gap-3 border-b border-border pb-5">
+            <Icon>
+              <SparklesIcon />
+            </Icon>
+            <div>
+              <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Control Room</p>
+              <h1 className="text-base font-medium">OpenCode Dashboard</h1>
             </div>
           </div>
-        </section>
 
-        <section className="px-6 pb-20 md:px-12" id="workflow">
-          <div className="mx-auto grid max-w-6xl gap-10 lg:grid-cols-[0.9fr_1.1fr]">
-            <div className="space-y-6">
-              <p className="text-xs uppercase tracking-[0.4em] text-muted">Workflow</p>
-              <h2 className="font-display text-3xl md:text-4xl">
-                A senior workflow that fits your team's muscle memory.
-              </h2>
-              <p className="text-sm text-muted">
-                to keeps project TODOs close to the code. init, add, scan, and branch in minutes. No browser tabs, no context switching, just forward motion.
-              </p>
-              <div className="space-y-4 text-sm">
-                {[
-                  "Initialize once per repo with tto init.",
-                  "Capture tasks with priority, labels, and nested subtasks.",
-                  "Pull TODOs from code with tto scan.",
-                  "Open the next task or jump into a branch with tto do.",
-                ].map((step, index) => (
-                  <div key={step} className="flex items-start gap-3">
-                    <span className="mt-1 flex h-6 w-6 items-center justify-center rounded-full border border-[#2a2a2a] text-xs">
-                      {index + 1}
-                    </span>
-                    <span className="text-muted">{step}</span>
-                  </div>
-                ))}
-              </div>
+          <form
+            className="mt-5 space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setDirectory(inputDirectory);
+            }}
+          >
+            <label className="block text-xs uppercase tracking-[0.24em] text-muted-foreground">Load repo</label>
+            <div className="relative">
+              <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground">
+                <FolderIcon />
+              </span>
+              <input
+                value={inputDirectory}
+                onChange={(event) => setInputDirectory(event.target.value)}
+                className="w-full rounded-md border border-input bg-background py-2.5 pl-10 pr-3 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                placeholder="C:/path/to/repo"
+              />
             </div>
-            <div className="card rounded-3xl p-6">
+            <button className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-border bg-foreground px-4 text-sm font-medium text-background transition-colors hover:bg-foreground/90" type="submit">
+              <FolderIcon />
+              Load repo
+            </button>
+          </form>
+
+          <div className="mt-5 space-y-3">
+            {[
+              ["Open", todo?.open ?? 0],
+              ["Done", todo?.done ?? 0],
+              ["Sessions", opencode?.sessions.length ?? 0],
+              ["Projects", opencode?.projects.length ?? 0],
+            ].map(([label, value]) => (
+              <div key={label} className="flex items-center justify-between rounded-md border border-border bg-muted/30 px-4 py-3">
+                <span className="text-sm text-muted-foreground">{label}</span>
+                <span className="text-sm font-medium text-foreground">{value}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-5 rounded-md border border-border bg-muted/30 p-4 text-sm">
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <ServerIcon />
+              <p className="text-xs uppercase tracking-[0.24em]">OpenCode</p>
+            </div>
+            <p className="mt-3 text-sm text-foreground">{opencode?.connected ? `Connected to ${opencode.baseUrl}` : "OpenCode offline or unavailable"}</p>
+            <p className="mt-2 text-xs text-muted-foreground">{opencode?.connected ? "Server reachable" : "Waiting for server"}</p>
+          </div>
+        </aside>
+
+        <section className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <div className="flex flex-col gap-5 border-b border-border pb-5 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Developer todo cockpit</p>
+              <h2 className="mt-2 text-3xl font-semibold tracking-tight md:text-4xl">Tasks, sessions, and OpenCode in one view.</h2>
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">Load a repo, inspect its `.todo`, review live OpenCode sessions, and launch work directly from the dashboard.</p>
+            </div>
+            <button className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-background px-4 text-sm font-medium text-foreground transition-colors hover:bg-muted/60" type="button" onClick={() => loadSnapshot(directory)}>
+              <RefreshIcon />
+              Refresh
+            </button>
+          </div>
+
+          <div className="mt-5 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+            <div className="rounded-md border border-border bg-background p-4">
               <div className="flex items-center justify-between">
-                <p className="text-xs uppercase tracking-[0.3em] text-muted">Commands</p>
-                <span className="badge rounded-full px-3 py-1 text-[11px]">always local</span>
+                <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Todo graph</p>
+                <span className="rounded-full border border-border bg-muted/40 px-3 py-1 text-xs text-muted-foreground">{todo?.path ?? "no repo loaded"}</span>
               </div>
-              <div className="mt-6 grid gap-4 text-sm">
-                {[
-                  {
-                    cmd: "tto ls --priority high",
-                    desc: "Filter the urgent work without losing ordering.",
-                  },
-                  {
-                    cmd: "tto add \"ship onboarding\" --label growth",
-                    desc: "Quick capture with labels that sync intent.",
-                  },
-                  {
-                    cmd: "tto tree 12",
-                    desc: "See nested subtasks for large epics.",
-                  },
-                  {
-                    cmd: "tto do 12 --create-branch",
-                    desc: "Spin up the task branch instantly.",
-                  },
-                ].map((row) => (
-                  <div key={row.cmd} className="rounded-2xl border border-[#1f1f1f] bg-[#0b0b0b] p-4">
-                    <p className="font-mono text-xs text-[#e5e5e5]">{row.cmd}</p>
-                    <p className="mt-2 text-xs text-muted">{row.desc}</p>
+
+              {loading ? <p className="mt-4 text-sm text-muted-foreground">Loading repository...</p> : null}
+              {error ? <p className="mt-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}
+              {todo?.error ? <p className="mt-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">{todo.error}</p> : null}
+
+              <div className="mt-4 space-y-3">
+                {todo?.tasks.length ? (
+                  todo.tasks.map((task) => {
+                    const selected = selectedTask?.id === task.id;
+                    return (
+                      <button
+                        key={task.id}
+                        type="button"
+                        onClick={() => setSelectedTaskId(task.id)}
+                        className={`w-full rounded-md border px-4 py-4 text-left transition-colors ${selected ? "border-foreground/30 bg-muted/60" : "border-border bg-background hover:bg-muted/40"}`}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm font-medium text-foreground">{task.text}</span>
+                              <span className={`rounded-full border px-2 py-0.5 text-[11px] uppercase tracking-[0.18em] ${task.done ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-border bg-muted/50 text-muted-foreground"}`}>
+                                {task.done ? "done" : "open"}
+                              </span>
+                            </div>
+                            <p className="mt-2 text-xs text-muted-foreground">{task.indent > 0 ? "subtask" : "root task"}</p>
+                          </div>
+                          <span className="rounded-full border border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground">#{task.id}</span>
+                        </div>
+
+                        <div className="mt-4 flex flex-wrap gap-2 text-xs">
+                          {task.priority ? <span className="rounded-full border border-border bg-muted/40 px-2 py-1 text-muted-foreground">@{task.priority}</span> : null}
+                          {task.labels.map((label) => (
+                            <span key={label} className="rounded-full border border-border bg-muted/40 px-2 py-1 text-muted-foreground">#{label}</span>
+                          ))}
+                        </div>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="rounded-md border border-dashed border-border bg-muted/20 p-8 text-sm text-muted-foreground">
+                    No `.todo` file found yet. Load a repo with `to init` run in it or create one in the project root.
                   </div>
-                ))}
+                )}
               </div>
             </div>
-          </div>
-        </section>
 
-        <section className="px-6 pb-20 md:px-12" id="workflow-proof">
-          <div className="mx-auto max-w-6xl">
-            <div className="grid gap-8 lg:grid-cols-[1.05fr_0.95fr]">
-              <div className="space-y-4">
-                <p className="text-xs uppercase tracking-[0.4em] text-muted">Proof points</p>
-                <h2 className="font-display text-3xl md:text-4xl">
-                  A simple way to keep TODOs real.
-                </h2>
-                <p className="text-sm text-muted">
-                  Local files keep ownership clear and avoid vendor lock-in. Perfect for founders who ship fast and teams who ship together.
-                </p>
-              </div>
-              <div className="card rounded-3xl p-6">
-                <div className="grid gap-4 text-sm text-muted">
-                  {[
-                    {
-                      title: "Zero setup overhead",
-                      copy: "Initialize once and every repo knows where to look.",
-                    },
-                    {
-                      title: "Composable by default",
-                      copy: "Works with git, opencode, and any editor you already use.",
-                    },
-                    {
-                      title: "Built for focus",
-                      copy: "Instant filters keep urgent work visible without reshuffling.",
-                    },
-                  ].map((item) => (
-                    <div key={item.title} className="rounded-2xl border border-[#1f1f1f] bg-[#0b0b0b] p-4">
-                      <p className="font-display text-base text-foreground">{item.title}</p>
-                      <p className="mt-2 text-xs text-muted">{item.copy}</p>
+            <div className="space-y-4">
+              <div className="rounded-md border border-border bg-background p-4">
+                <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Selected task</p>
+                {selectedTask ? (
+                  <>
+                    <h3 className="mt-2 text-2xl font-semibold tracking-tight">{selectedTask.text}</h3>
+                    <div className="mt-4 space-y-3 text-sm text-muted-foreground">
+                      <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 px-3 py-2">
+                        <span>Repository</span>
+                        <span className="text-foreground">{snapshot?.repoRoot}</span>
+                      </div>
+                      <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 px-3 py-2">
+                        <span>State</span>
+                        <span className="text-foreground">{selectedTask.done ? "done" : "open"}</span>
+                      </div>
                     </div>
-                  ))}
+
+                    <div className="mt-4 grid grid-cols-2 gap-3">
+                      <button className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-foreground px-4 text-sm font-medium text-background transition-colors hover:bg-foreground/90" type="button" onClick={() => openTask(selectedTask)}>
+                        <PlayIcon />
+                        Open in OpenCode
+                      </button>
+                      <button className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-background px-4 text-sm font-medium text-foreground transition-colors hover:bg-muted/60" type="button" onClick={() => toggleTask(selectedTask, !selectedTask.done)}>
+                        <CheckIcon />
+                        Mark {selectedTask.done ? "open" : "done"}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <p className="mt-3 text-sm text-muted-foreground">Select a task to inspect it.</p>
+                )}
+              </div>
+
+              <div className="rounded-md border border-border bg-background p-4">
+                <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">OpenCode sessions</p>
+                <div className="mt-3 space-y-3">
+                  {opencode?.sessions.length ? (
+                    opencode.sessions.map((session) => (
+                      <div key={session.id} className="rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-medium text-foreground">{session.title}</span>
+                          <span className="text-xs text-muted-foreground">{session.id}</span>
+                        </div>
+                        <p className="mt-2 text-xs text-muted-foreground">{session.directory}</p>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No sessions yet.</p>
+                  )}
                 </div>
               </div>
             </div>
           </div>
         </section>
 
-        <section className="px-6 pb-24 md:px-12" id="cta">
-          <div className="mx-auto grid max-w-6xl gap-8 lg:grid-cols-[1.05fr_0.95fr]">
-            <div className="card rounded-3xl p-8">
-              <p className="text-xs uppercase tracking-[0.4em] text-muted">Get started</p>
-                <h2 className="mt-4 font-display text-3xl md:text-4xl">
-                  Install in seconds. Ship with clarity.
-                </h2>
-                <p className="mt-4 text-sm text-muted">
-                  Add tto to any repo and keep your work visible, prioritized, and ready for execution.
-                </p>
-                <div className="mt-6 rounded-2xl border border-[#1f1f1f] bg-[#0b0b0b] p-4">
-                  <p className="text-xs uppercase tracking-[0.3em] text-muted">Install</p>
-                  <p className="mt-2 font-mono text-sm text-[#e5e5e5]">cargo install tto</p>
-                </div>
-                <div className="mt-6 flex flex-wrap items-center gap-3">
-                <a className="btn-primary rounded-full px-6 py-3 font-semibold" href="https://github.com/thetanav/to" target="_blank" rel="noreferrer">
-                  View on GitHub
-                </a>
-                <a className="btn-secondary rounded-full px-6 py-3" href="https://crates.io/crates/tto" target="_blank" rel="noreferrer">
-                  View on Crates
-                </a>
-              </div>
+        <aside className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <div className="flex items-center justify-between border-b border-border pb-4">
+            <div>
+              <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Workspace</p>
+              <h3 className="mt-2 text-xl font-semibold">Live state</h3>
             </div>
-            <div className="card rounded-3xl p-8" id="team">
-              <p className="text-xs uppercase tracking-[0.4em] text-muted">Built for serious teams</p>
-              <h3 className="mt-4 font-display text-2xl">Replace scattered TODOs with a shared standard.</h3>
-              <p className="mt-3 text-sm text-muted">
-                Keep tasks in git, stay portable, and give every contributor instant context. No dashboards, no tickets, just work.
-              </p>
-              <div className="mt-6 grid gap-3 text-sm text-muted">
-                <div className="flex items-center justify-between rounded-2xl border border-[#1f1f1f] bg-[#0b0b0b] p-4">
-                  <span>Works in monorepos</span>
-                  <span className="text-foreground">Yes</span>
-                </div>
-                <div className="flex items-center justify-between rounded-2xl border border-[#1f1f1f] bg-[#0b0b0b] p-4">
-                  <span>Team conventions</span>
-                  <span className="text-foreground">Built-in</span>
-                </div>
-                <div className="flex items-center justify-between rounded-2xl border border-[#1f1f1f] bg-[#0b0b0b] p-4">
-                  <span>Agent readiness</span>
-                  <span className="text-foreground">Native</span>
-                </div>
-              </div>
-              <p className="mt-4 text-xs text-muted">CLI-first workflow for teams who ship.</p>
-            </div>
+            <span className="rounded-full border border-border bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
+              {opencode?.connected ? "online" : "offline"}
+            </span>
           </div>
-        </section>
 
-        <section className="border-t border-[#1f1f1f] px-6 py-10 md:px-12">
-          <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-6 text-sm text-muted">
-            <p>Built by engineers who live in the terminal.</p>
-            <div className="flex items-center gap-6">
-              <a className="transition hover:text-foreground" href="https://github.com/thetanav/to" target="_blank" rel="noreferrer">
-                GitHub
-              </a>
-              <a className="transition hover:text-foreground" href="https://crates.io/crates/tto" target="_blank" rel="noreferrer">
-                Crates
-              </a>
+          <div className="mt-4 space-y-4 text-sm text-muted-foreground">
+            <div className="rounded-md border border-border bg-muted/30 p-4">
+              <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Current project</p>
+              <p className="mt-3 text-foreground">{opencode?.currentProject?.worktree ?? snapshot?.repoRoot ?? "No project loaded"}</p>
+            </div>
+
+            <div className="rounded-md border border-border bg-muted/30 p-4">
+              <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Projects seen by OpenCode</p>
+              <div className="mt-3 space-y-2">
+                {opencode?.projects.length ? opencode.projects.map((project) => <div key={project.id} className="rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground">{project.worktree}</div>) : <p className="text-sm text-muted-foreground">No projects yet.</p>}
+              </div>
+            </div>
+
+            <div className="rounded-md border border-border bg-muted/30 p-4">
+              <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Status</p>
+              <p className="mt-3 text-sm text-foreground">{opencode?.error ?? "Connected and ready"}</p>
             </div>
           </div>
-        </section>
-      </main>
-    </div>
+        </aside>
+      </div>
+    </main>
   );
 }

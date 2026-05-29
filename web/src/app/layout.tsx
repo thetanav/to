@@ -1,21 +1,19 @@
 import type { Metadata } from "next";
-import { Instrument_Sans, Space_Grotesk } from "next/font/google";
+import { Instrument_Sans, Space_Grotesk, Geist } from "next/font/google";
 import "./globals.css";
+import { cn } from "@/lib/utils";
 
 const display = Space_Grotesk({
   variable: "--font-display",
   subsets: ["latin"],
 });
 
-const sans = Instrument_Sans({
-  variable: "--font-sans",
-  subsets: ["latin"],
-});
+const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
 export const metadata: Metadata = {
-  title: "to - Project-Scoped TODOs for Dev Flow",
+  title: "to - Developer Todo Control Room",
   description:
-    "A fast, project-scoped TODO CLI that keeps teams shipping. Initialize, scan, prioritize, and launch work in seconds.",
+    "A local-first dashboard for developer TODOs, OpenCode sessions, and fast task handoff.",
 };
 
 export default function RootLayout({
@@ -26,7 +24,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${display.variable} ${sans.variable} h-full antialiased`}
+      className={cn("h-full", "antialiased", display.variable, "font-sans", geist.variable)}
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
