@@ -28,6 +28,8 @@ to ls --label backend
 to add "implement streaming responses"
 to add "critical API fix" --priority high --label backend --label api
 to add "write unit tests" --parent 1
+to edit
+to mv 4 2
 to done 1 2
 to do 1 2
 to do 1 2 -b feature/batch-work
@@ -35,6 +37,7 @@ to do 1 --create-branch
 to uncheck 1 2
 to scan
 to rm 2 3
+to prune
 to next
 to tree 1
 ```

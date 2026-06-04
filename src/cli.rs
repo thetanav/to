@@ -4,56 +4,60 @@ use crate::error::{AppError, Result};
 use crate::todo::{clean_label, Priority};
 
 pub const HELP_TEXT: &str = "\
-to - project-based TODO manager
+to - project TODOs
 
 Usage:
-  to
-      This is fast and no bs cli for humans and agents to store project level todos.
-
-      Example - [ ] implement streaming responses
-                [ ] add sqlite persistence
-                [x] setup CLI parser
-
-      `to` looks for a `.todo` file in the current directory and then each parent directory.
+  to [ls] [query] [--priority <high|medium|low>] [--label <label>]
+      List tasks for the current project. Filters can be combined.
 
   to init
       Create a new .todo file in the current directory
 
-  to ls [query] [--priority <high|medium|low>] [--label <label>]
-      List tasks for the current project, optionally filtered by query, priority, or label
+  to add \"task text\" [--parent <number>] [--priority <high|medium|low>] [--label <label>]
+      Add a new task or subtask
 
-  to add \"task text\"
-      Add a new task
+  to edit
+      Open the project .todo in your editor
 
-  to add \"task text\" --priority <high|medium|low> --label <label>
-      Add a task with AI-friendly metadata
-
-  to add \"task text\" --parent <number>
-      Add a subtask under an existing task
+  to mv <from> <to>
+      Move a task (and its subtasks) to a new position
 
   to done <number> [number ...]
       Mark one or more tasks completed
 
-  to do <number> [number ...] [-b <branch-name>]
-      Launch `opencode` for one or more tasks; with `-b`, switch to the named branch first
-
-  to do <number> [number ...] --create-branch
-      Launch `opencode` after creating/switching to feature/<task-slug>
-
   to uncheck <number> [number ...]
       Mark one or more tasks as not completed
 
-  to scan
-      Scan git-tracked files for `TODO:` comments and add them to .todo
-
   to rm <number> [number ...]
       Remove one or more tasks
+
+  to prune
+      Remove completed tasks that have no open subtasks
+
+  to do <number> [number ...] [-b <branch-name> | --create-branch]
+      Launch `opencode` for one or more tasks; optionally switch/create a branch
 
   to next
       Show the first unfinished task
 
   to tree <number>
       Show a task and its subtasks
+
+  to scan
+      Scan git-tracked files for `TODO:` comments and add them to .todo
+
+Notes:
+  `to` looks for a `.todo` file in the current directory and then each parent directory.
+
+Examples:
+  to
+  to add \"implement streaming responses\"
+  to add \"write unit tests\" --parent 1
+  to edit
+  to mv 5 2
+  to ls sqlite --priority high --label backend
+  to done 1 2
+  to do 1 --create-branch
 ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,6 +71,8 @@ pub enum Command {
         priority: Option<Priority>,
         labels: Vec<String>,
     },
+    Edit,
+    Move { from: usize, to: usize },
     Done(Vec<usize>),
     Do {
         indices: Vec<usize>,
@@ -76,6 +82,7 @@ pub enum Command {
     Uncheck(Vec<usize>),
     Scan,
     Remove(Vec<usize>),
+    Prune,
     Next,
     Tree(usize),
 }
@@ -100,7 +107,7 @@ where
         .collect::<Result<Vec<_>>>()?;
 
     let Some((command, rest)) = args.split_first() else {
-        return Ok(Command::Help);
+        return Ok(Command::List(ListOptions::default()));
     };
 
     match command.as_str() {
@@ -109,14 +116,17 @@ where
         "ls" => parse_list_command(rest),
         "next" => expect_no_extra_args(rest, Command::Next),
         "scan" => expect_no_extra_args(rest, Command::Scan),
+        "edit" => expect_no_extra_args(rest, Command::Edit),
         "add" => parse_add_command(rest),
         "done" => parse_indices_command(rest, "done", Command::Done),
         "do" => parse_do_command(rest),
         "uncheck" => parse_indices_command(rest, "uncheck", Command::Uncheck),
         "rm" => parse_indices_command(rest, "rm", Command::Remove),
+        "mv" => parse_move_command(rest),
+        "prune" => expect_no_extra_args(rest, Command::Prune),
         "tree" => parse_tree_command(rest),
         other => Err(AppError::InvalidArgs(format!(
-            "unknown command `{other}`: run `to` for usage"
+            "unknown command `{other}`: run `to --help` for usage"
         ))),
     }
 }
@@ -335,6 +345,23 @@ fn parse_tree_command(rest: &[String]) -> Result<Command> {
     })?))
 }
 
+fn parse_move_command(rest: &[String]) -> Result<Command> {
+    let [from, to] = rest else {
+        return Err(AppError::InvalidArgs(
+            "usage: `to mv <from> <to>`".to_string(),
+        ));
+    };
+
+    let from = from.parse::<usize>().map_err(|_| {
+        AppError::InvalidArgs("task number must be a positive integer for `mv`".to_string())
+    })?;
+    let to = to.parse::<usize>().map_err(|_| {
+        AppError::InvalidArgs("task number must be a positive integer for `mv`".to_string())
+    })?;
+
+    Ok(Command::Move { from, to })
+}
+
 fn parse_do_command(rest: &[String]) -> Result<Command> {
     if rest.is_empty() {
         return Err(do_usage_error());
@@ -410,8 +437,11 @@ mod tests {
     }
 
     #[test]
-    fn parses_help_by_default() {
-        assert_eq!(parse_args(Vec::<OsString>::new()).unwrap(), Command::Help);
+    fn parses_list_by_default() {
+        assert_eq!(
+            parse_args(Vec::<OsString>::new()).unwrap(),
+            Command::List(ListOptions::default())
+        );
     }
 
     #[test]
@@ -538,6 +568,24 @@ mod tests {
                 create_branch: true
             }
         );
+    }
+
+    #[test]
+    fn parses_move_command() {
+        assert_eq!(
+            parse_args(args(&["mv", "4", "2"])).unwrap(),
+            Command::Move { from: 4, to: 2 }
+        );
+    }
+
+    #[test]
+    fn parses_edit_command() {
+        assert_eq!(parse_args(args(&["edit"])).unwrap(), Command::Edit);
+    }
+
+    #[test]
+    fn parses_prune_command() {
+        assert_eq!(parse_args(args(&["prune"])).unwrap(), Command::Prune);
     }
 
     #[test]

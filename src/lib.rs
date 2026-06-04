@@ -77,7 +77,13 @@ where
 
             match other {
                 Command::List(options) => {
-                    write_task_list(writer, &todo_path, &todos, &options, use_color)?
+                    let has_filters = options.query.is_some()
+                        || options.priority.is_some()
+                        || !options.labels.is_empty();
+                    write_task_list(writer, &todo_path, &todos, &options, use_color)?;
+                    if !has_filters {
+                        write_list_shortcuts(writer)?;
+                    }
                 }
                 Command::Add {
                     text,
@@ -97,6 +103,25 @@ where
                         "{} task {index}: {}",
                         styled(use_color, "36", "Added"),
                         task.render_text()
+                    )?;
+                }
+                Command::Edit => {
+                    open_in_editor(&todo_path)?;
+                    writeln!(
+                        writer,
+                        "{} {}",
+                        styled(use_color, "36", "Opened"),
+                        todo_path.display()
+                    )?;
+                }
+                Command::Move { from, to } => {
+                    let task = todos.task(from)?.render_text();
+                    todos.move_task(from, to)?;
+                    todos.save(&todo_path)?;
+                    writeln!(
+                        writer,
+                        "{} task {from} to position {to}: {task}",
+                        styled(use_color, "36", "Moved")
                     )?;
                 }
                 Command::Done(indices) => {
@@ -224,6 +249,20 @@ where
                         )?;
                     }
                 }
+                Command::Prune => {
+                    let pruned = todos.prune_completed();
+                    if pruned == 0 {
+                        writeln!(writer, "No completed tasks to prune.")?;
+                    } else {
+                        todos.save(&todo_path)?;
+                        writeln!(
+                            writer,
+                            "{} {pruned} completed task{}.",
+                            styled(use_color, "31", "Pruned"),
+                            if pruned == 1 { "" } else { "s" }
+                        )?;
+                    }
+                }
                 Command::Next => {
                     if let Some((index, task)) = todos.next_open_task() {
                         writeln!(
@@ -342,6 +381,34 @@ fn launch_opencode(project_root: &Path, prompt: &str) -> Result<()> {
     }
 }
 
+fn open_in_editor(path: &Path) -> Result<()> {
+    let editor = env::var_os("EDITOR")
+        .or_else(|| env::var_os("VISUAL"))
+        .ok_or_else(|| {
+            AppError::InvalidArgs(
+                "set $EDITOR (or $VISUAL) to use `to edit`".to_string(),
+            )
+        })?;
+
+    let mut command = ProcessCommand::new(&editor);
+    command.arg(path);
+    let status = command.status().map_err(|error| {
+        AppError::CommandFailed(format!(
+            "failed to launch editor `{}`: {error}",
+            editor.to_string_lossy()
+        ))
+    })?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(AppError::CommandFailed(format!(
+            "editor `{}` exited with status {status}",
+            editor.to_string_lossy()
+        )))
+    }
+}
+
 fn switch_to_task_branch(project_root: &Path, branch_name: &str) -> Result<String> {
     if git_branch_exists(project_root, &branch_name)? {
         run_git_command(
@@ -424,7 +491,10 @@ fn write_task_list<W: Write>(
     )?;
 
     if todos.tasks().is_empty() {
-        writeln!(writer, "No tasks yet.")?;
+        writeln!(
+            writer,
+            "No tasks yet. Run `to add \"task text\"` or `to scan`."
+        )?;
         return Ok(());
     }
 
@@ -521,6 +591,18 @@ fn write_task_list<W: Write>(
     Ok(())
 }
 
+fn write_list_shortcuts<W: Write>(writer: &mut W) -> Result<()> {
+    writeln!(writer, "")?;
+    writeln!(writer, "Shortcuts:")?;
+    writeln!(writer, "  to add \"task text\"")?;
+    writeln!(writer, "  to edit")?;
+    writeln!(writer, "  to mv <from> <to>")?;
+    writeln!(writer, "  to done <number> [number ...]")?;
+    writeln!(writer, "  to prune")?;
+    writeln!(writer, "  to next")?;
+    Ok(())
+}
+
 fn validate_task_indices(todos: &TodoList, indices: &[usize]) -> Result<Vec<usize>> {
     let indices = unique_indices(indices);
     for &index in &indices {
@@ -608,14 +690,10 @@ mod tests {
         .unwrap();
 
         let rendered = String::from_utf8(output).unwrap();
-        assert!(rendered.contains("to ls [query]"));
+        assert!(rendered.contains("to [ls] [query]"));
         assert!(rendered.contains("to init"));
-        assert!(rendered.contains("to add \"task text\" --parent <number>"));
-        assert!(
-            rendered.contains("to add \"task text\" --priority <high|medium|low> --label <label>")
-        );
-        assert!(rendered.contains("to do <number> [number ...] [-b <branch-name>]"));
-        assert!(rendered.contains("to do <number> [number ...] --create-branch"));
+        assert!(rendered.contains("to add \"task text\" [--parent <number>"));
+        assert!(rendered.contains("to do <number> [number ...] [-b <branch-name> | --create-branch]"));
         assert!(rendered.contains("to tree <number>"));
     }
 
@@ -729,6 +807,56 @@ mod tests {
         assert!(rendered.contains("1. [ ] api fix @high #backend #api"));
         assert!(!rendered.contains("ui polish"));
         assert!(rendered.contains("Matches: 1  Open: 1  Done: 0"));
+    }
+
+    #[test]
+    fn move_command_reorders_tasks() {
+        let temp = TempDir::new("move-command");
+        fs::write(temp.path.join(".todo"), "[ ] first\n[ ] second\n[ ] third\n").unwrap();
+
+        let mut output = Vec::new();
+        execute(
+            Command::Move { from: 3, to: 2 },
+            &temp.path,
+            &mut output,
+            false,
+            |_root, _prompt| Ok(()),
+            |_root, branch_name| Ok(branch_name.to_string()),
+        )
+        .unwrap();
+
+        let saved = fs::read_to_string(temp.path.join(".todo")).unwrap();
+        assert_eq!(saved, "[ ] first\n[ ] third\n[ ] second\n");
+
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(rendered.contains("Moved task 3 to position 2: third"));
+    }
+
+    #[test]
+    fn prune_command_removes_completed_tasks() {
+        let temp = TempDir::new("prune-command");
+        fs::write(
+            temp.path.join(".todo"),
+            "[x] done\n  [x] done child\n[ ] open\n",
+        )
+        .unwrap();
+
+        let mut output = Vec::new();
+        execute(
+            Command::Prune,
+            &temp.path,
+            &mut output,
+            false,
+            |_root, _prompt| Ok(()),
+            |_root, branch_name| Ok(branch_name.to_string()),
+        )
+        .unwrap();
+
+        let saved = fs::read_to_string(temp.path.join(".todo")).unwrap();
+        assert_eq!(saved, "[ ] open\n");
+
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(rendered.contains("Pruned 2 completed tasks."));
     }
 
     #[test]

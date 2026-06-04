@@ -239,6 +239,87 @@ impl TodoList {
         Ok(&self.tasks[index])
     }
 
+    pub fn move_task(&mut self, from: usize, to: usize) -> Result<()> {
+        let from_index = self.checked_index(from)?;
+        let list_len = self.tasks.len();
+
+        if to == from {
+            return Ok(());
+        }
+
+        let to_index = if to > list_len + 1 {
+            return Err(AppError::InvalidTaskIndex {
+                index: to,
+                len: list_len,
+            });
+        } else if to == list_len + 1 {
+            list_len
+        } else {
+            self.checked_index(to)?
+        };
+
+        let moved_indent = self.tasks[from_index].indent;
+        let subtree_end = self.subtree_end(from_index);
+        if to_index >= from_index && to_index < subtree_end {
+            return Err(AppError::InvalidArgs(
+                "cannot move a task into its own subtree".to_string(),
+            ));
+        }
+
+        let mut segment: Vec<Task> = self.tasks.drain(from_index..subtree_end).collect();
+
+        let mut insert_at = to_index;
+        if from_index < to_index {
+            insert_at = insert_at.saturating_sub(segment.len());
+        }
+
+        if insert_at > self.tasks.len() {
+            insert_at = self.tasks.len();
+        }
+
+        let target_indent = self.tasks.get(insert_at).map(|task| task.indent);
+        if let Some(target_indent) = target_indent {
+            let indent_delta = target_indent as isize - moved_indent as isize;
+            for task in &mut segment {
+                if indent_delta > 0 {
+                    task.indent = task.indent.saturating_add(indent_delta as usize);
+                } else if indent_delta < 0 {
+                    task.indent = task.indent.saturating_sub((-indent_delta) as usize);
+                }
+            }
+        }
+
+        self.tasks.splice(insert_at..insert_at, segment);
+        Ok(())
+    }
+
+    pub fn prune_completed(&mut self) -> usize {
+        if self.tasks.is_empty() {
+            return 0;
+        }
+
+        let mut pruned = 0usize;
+        let mut index = 0usize;
+        while index < self.tasks.len() {
+            if !self.tasks[index].done {
+                index += 1;
+                continue;
+            }
+
+            let subtree_end = self.subtree_end(index);
+            let all_done = self.tasks[index..subtree_end].iter().all(|task| task.done);
+            if !all_done {
+                index += 1;
+                continue;
+            }
+
+            pruned += subtree_end - index;
+            self.tasks.drain(index..subtree_end);
+        }
+
+        pruned
+    }
+
     pub fn tasks(&self) -> &[Task] {
         &self.tasks
     }
@@ -394,6 +475,33 @@ mod tests {
         .unwrap();
 
         assert_eq!(list.tasks[0].render_text(), "api fix @medium #backend #api");
+    }
+
+    #[test]
+    fn moves_task_with_subtree() {
+        let mut list = TodoList::parse(
+            "[ ] first\n[ ] second\n  [ ] second child\n[ ] third\n",
+        )
+        .unwrap();
+        list.move_task(4, 2).unwrap();
+        assert_eq!(list.tasks[0].text, "first");
+        assert_eq!(list.tasks[1].text, "third");
+        assert_eq!(list.tasks[2].text, "second");
+        assert_eq!(list.tasks[3].text, "second child");
+    }
+
+    #[test]
+    fn prunes_completed_tasks_without_open_descendants() {
+        let mut list = TodoList::parse(
+            "[x] done\n  [x] done child\n[ ] open\n[x] mixed\n  [ ] open child\n",
+        )
+        .unwrap();
+        let pruned = list.prune_completed();
+        assert_eq!(pruned, 2);
+        assert_eq!(list.tasks.len(), 3);
+        assert_eq!(list.tasks[0].text, "open");
+        assert_eq!(list.tasks[1].text, "mixed");
+        assert_eq!(list.tasks[2].text, "open child");
     }
 
     #[test]
